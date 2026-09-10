@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.db
+.pytest_cache/
+.vscode/
+.DS_Store
+
+# Working artifact cache -- regenerated at startup, not part of the repo.
+# The final 3 submission videos live in submission/videos/ instead, which
+# IS tracked.
+artifacts/*
+!artifacts/.gitkeep

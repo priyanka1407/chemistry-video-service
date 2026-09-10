@@ -1,0 +1,32 @@
+# --- API ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+
+# --- persistence ---
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.9        # PostgreSQL driver
+
+# --- LangChain (text/embedding LLM calls go through here so swapping
+#     Gemini -> OpenAI/Anthropic is a config change, not a rewrite) ---
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+
+# Optional providers -- only needed if LLM_PROVIDER is set to one of these.
+# Uncomment / pip install the one you switch to:
+# langchain-openai>=0.2.0
+# langchain-anthropic>=0.3.0
+
+# --- direct Google Veo access (LangChain has no video-gen support) ---
+google-genai>=1.0.0
+
+# --- local video renderer ---
+Pillow>=10.2.0
+gTTS>=2.5.1
+pyttsx3>=2.90                 # offline TTS fallback when gTTS (network) fails
+
+# --- tests ---
+pytest>=8.0.0
+httpx>=0.27.0
