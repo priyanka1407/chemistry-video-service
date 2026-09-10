@@ -4,29 +4,29 @@
     "learner_query": "How does the pH scale work?",
     "video_file": "ph_scale.mp4",
     "provider": "local",
-    "cost_usd": 0.0,
-    "duration_seconds": 57.500976,
+    "cost_usd": 0.000334,
+    "duration_seconds": 47.33431,
     "validation_passed": true,
-    "job_id": "a1edbbb2-12e2-4aca-9ece-604389175df7"
+    "job_id": "507ec72b-b38a-403f-9193-aec01f2dccfe"
   },
   {
     "topic_id": "covalent_bond_formation",
     "learner_query": "Why do atoms form covalent bonds?",
     "video_file": "covalent_bond_formation.mp4",
     "provider": "local",
-    "cost_usd": 0.0,
-    "duration_seconds": 40.95931,
+    "cost_usd": 0.000319,
+    "duration_seconds": 44.917643,
     "validation_passed": true,
-    "job_id": "44cf6b9c-a286-4b68-b6aa-bf136e8c74ae"
+    "job_id": "7eff3388-5b09-4def-b29e-ebdfeb22d905"
   },
   {
     "topic_id": "ionic_vs_covalent",
     "learner_query": "What is the difference between ionic and covalent bonding?",
     "video_file": "ionic_vs_covalent.mp4",
     "provider": "local",
-    "cost_usd": 0.0,
-    "duration_seconds": 57.917643,
+    "cost_usd": 0.000327,
+    "duration_seconds": 44.667643,
     "validation_passed": true,
-    "job_id": "70a5f23b-0a76-4c0f-9623-5c227c545999"
+    "job_id": "b713467c-d577-4f0b-915e-007a1b7422d0"
   }
 ]
