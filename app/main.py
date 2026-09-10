@@ -99,14 +99,22 @@ def list_all_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(db_dep
     return list_jobs(db, limit=limit, offset=offset)
 
 
-@app.get("/jobs/{job_id}/video")
+@app.get(
+    "/jobs/{job_id}/video",
+    responses={
+        200: {"content": {"video/mp4": {}}, "description": "The rendered mp4 for this job."},
+        404: {"model": ErrorOut},
+        409: {"model": ErrorOut},
+    },
+)
 def download_video(job_id: str, db: Session = Depends(db_dependency)):
     job = get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No job with id {job_id!r}")
     if job.status != JobStatus.SUCCESS.value or not job.video_location:
         raise HTTPException(status_code=409, detail=f"Job {job_id} has no video (status={job.status}).")
-    return FileResponse(job.video_location, media_type="video/mp4")
+    filename = f"{job.topic_id or job.id}.mp4"
+    return FileResponse(job.video_location, media_type="video/mp4", filename=filename)
 
 
 @app.get("/topics", response_model=list[TopicOut])

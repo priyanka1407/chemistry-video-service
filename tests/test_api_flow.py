@@ -67,6 +67,29 @@ def test_unknown_job_id_is_404():
         assert resp.status_code == 404
 
 
+def test_video_download_returns_the_mp4_with_correct_content_type():
+    with TestClient(app) as client:
+        seed = client.post("/generate", json={"query": "How does the pH scale work?"}).json()
+        resp = client.get(f"/jobs/{seed['id']}/video")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp4"
+        assert "attachment" in resp.headers.get("content-disposition", "")
+        assert resp.content == b"FAKE-MP4-BYTES-FOR-TESTS"
+
+
+def test_video_download_404_for_unknown_job():
+    with TestClient(app) as client:
+        resp = client.get("/jobs/does-not-exist/video")
+        assert resp.status_code == 404
+
+
+def test_video_download_409_when_job_has_no_video():
+    with TestClient(app) as client:
+        rejected = client.post("/generate", json={"query": "who is the winner of world cup 2026?"}).json()
+        resp = client.get(f"/jobs/{rejected['id']}/video")
+        assert resp.status_code == 409
+
+
 def test_guardrail_rejects_before_any_match():
     with TestClient(app) as client:
         resp = client.post("/generate", json={"query": "!!!"})
