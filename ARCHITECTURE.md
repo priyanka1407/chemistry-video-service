@@ -140,13 +140,31 @@ with **both** providers:
   video; "no check may be skipped silently" applies here too, so the failure
   reason is stored, not just an absent field.
 
-Veo clips from a single generation call are short (`VEO_DURATION_SECONDS`,
-typically ~8s) and silent. `VeoProvider._overlay_audio` loops the raw clip
-and pads the narration audio with trailing silence (`ffmpeg ... apad ...
--t {target}`) so the **delivered** clip is always at least
-`VEO_MIN_DURATION_SECONDS` (default 16s) long, regardless of how short the
-narration or the raw clip is -- not "however long the narration happens to
-be that run."
+A single Veo generation call only produces a short, silent clip
+(`VEO_DURATION_SECONDS`, default 6s) -- looping that one clip for an entire
+script's narration would show the same few seconds on repeat for the whole
+video, and bill Veo's per-second rate for however long that loop runs (a
+long script becomes an expensive video of one repeating clip). Instead,
+`VeoProvider` generates one distinct clip **per script slide** (capped at
+`VEO_MAX_SEGMENTS`, default 3), each prompted with that slide's own
+heading/bullets so the visual tracks what's actually being said, muxed with
+that slide's own narration, then concatenated (`app/video/veo_provider.py`
+mirrors the same per-segment mux + ffmpeg-concat pattern the local provider
+already uses for its slides). The concatenated result is then looped up to
+`VEO_MIN_DURATION_SECONDS` (16s) if short, or trimmed down to
+`VEO_MAX_DURATION_SECONDS` (20s) if long -- so both the visible repetition
+*and* the cost are bounded regardless of script length: Veo only ever bills
+for `min(slide_count, VEO_MAX_SEGMENTS) * VEO_DURATION_SECONDS` seconds of
+raw generation, a fixed number independent of how long the narration is
+(`RenderResult.billed_seconds` carries this for cost accounting, since it
+can differ from the final clip's `duration_seconds`).
+
+This doesn't eliminate repetition entirely -- within a single segment, the
+raw clip is still looped to cover that segment's own (now much shorter)
+narration chunk, since one Veo call can't natively extend a clip. Doing
+that properly would need Veo's video-extension API, which is out of scope
+here; splitting into multiple segments is what keeps this app's known
+limitation bounded rather than fixing the underlying constraint.
 
 Both renders, their metrics (duration, size, cost), and their own mechanical
 QC results are persisted on the same job row

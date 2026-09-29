@@ -197,19 +197,23 @@ def fake_openai_judge(monkeypatch):
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def fake_video_pipeline(monkeypatch, tmp_path):
-    def _stub_result(topic, script, job_id, provider, duration=42.0):
+    def _stub_result(topic, script, job_id, provider, duration=42.0, billed_seconds=None):
         out_path = tmp_path / f"{topic.id}_{job_id}_{provider}.mp4"
         out_path.write_bytes(f"FAKE-MP4-BYTES-{provider}".encode())
         return RenderResult(
             path=out_path, duration_seconds=duration, size_bytes=out_path.stat().st_size,
-            provider=provider, narration_text=script.narration_text,
+            provider=provider, narration_text=script.narration_text, billed_seconds=billed_seconds,
         )
 
     def fake_render_with_fallback(topic, script, job_id):
         return _stub_result(topic, script, job_id, "local")
 
     def fake_render_both(topic, script, job_id):
-        return _stub_result(topic, script, job_id, "local"), _stub_result(topic, script, job_id, "veo", duration=16.0), None
+        return (
+            _stub_result(topic, script, job_id, "local"),
+            _stub_result(topic, script, job_id, "veo", duration=20.0, billed_seconds=18.0),
+            None,
+        )
 
     def fake_validate(*, path, narration_text, topic):
         return ValidationResult(True, {"checks": {"mocked": True}, "note": "real validator covered separately"})

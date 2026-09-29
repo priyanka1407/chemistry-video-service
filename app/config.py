@@ -52,8 +52,10 @@ class Settings(BaseSettings):
 
     veo_model: str = "veo-3.1-fast-generate-preview"
     veo_aspect_ratio: str = "16:9"
-    veo_duration_seconds: int = 8  # per-segment length requested from the Veo API
-    veo_min_duration_seconds: int = 16  # final delivered clip is padded/looped up to at least this
+    veo_duration_seconds: int = 6  # seconds requested from the Veo API PER SEGMENT (billed regardless of final looping)
+    veo_max_segments: int = 3  # up to this many distinct visuals are generated, one per script slide
+    veo_min_duration_seconds: int = 16  # final delivered clip is looped up to at least this
+    veo_max_duration_seconds: int = 20  # ...and trimmed down to at most this -- cost/length is now bounded both ways
     veo_poll_interval_seconds: int = 10
     veo_timeout_seconds: int = 600
     veo_add_tts_audio_overlay: bool = True

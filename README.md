@@ -212,7 +212,9 @@ application code. Highlights beyond the original LLM/video-provider knobs:
 | `CELERY_TASK_ALWAYS_EAGER` | `false` | `true` runs generation synchronously inline, no worker/Redis needed (used by tests) |
 | `ENABLE_DUAL_VIDEO_GENERATION` | `true` | Render both gTTS(local) and Veo for every generated topic |
 | `DEFAULT_VIDEO_DELIVERY_PROVIDER` | `local` | Which variant `GET /jobs/{id}/video` streams by default |
-| `VEO_MIN_DURATION_SECONDS` | `16` | The delivered Veo clip is always padded/looped up to at least this long |
+| `VEO_MAX_SEGMENTS` | `3` | Up to this many distinct visuals are generated (one per script slide) instead of looping a single clip |
+| `VEO_DURATION_SECONDS` | `6` | Seconds requested from the Veo API *per segment* -- this is what's actually billed, fixed regardless of script length |
+| `VEO_MIN_DURATION_SECONDS` / `VEO_MAX_DURATION_SECONDS` | `16` / `20` | The final concatenated clip is looped up to at least the min and trimmed down to at most the max |
 
 ## Swapping the LLM provider
 
@@ -238,12 +240,15 @@ Each newly-generated topic now costs: 1 embedding call, 1+ script calls
 (regenerated up to `MAX_REGENERATION_ATTEMPTS` times on a failed gate), 1
 claim-extraction judge call, ~4-8 per-claim grounding judge calls, 1
 teaching-quality judge call, 1 output-review judge call, a local render
-(fraction of a cent), and a Veo render (`COST_VEO_PER_SECOND` x at least
-`VEO_MIN_DURATION_SECONDS`, ~$2.40 at the default $0.15/s x 16s). **Since
-only 3 topics are ever generated -- once each, the first time they're
-requested -- and every later request for them is a DB read, the marginal
-cost of arbitrary request volume is one embedding call.** See
-ARCHITECTURE.md for the full reliability design.
+(fraction of a cent), and a Veo render. The Veo cost is now **fixed**
+regardless of script length: `VEO_MAX_SEGMENTS * VEO_DURATION_SECONDS *
+COST_VEO_PER_SECOND` (~$2.70 at the defaults, 3 segments x 6s x $0.15/s) --
+Veo only ever bills for the raw per-segment generation, never for however
+long the final clip ends up being looped/trimmed to. **Since only 3 topics
+are ever generated -- once each, the first time they're requested -- and
+every later request for them is a DB read, the marginal cost of arbitrary
+request volume is one embedding call.** See ARCHITECTURE.md for the full
+reliability design.
 
 ## Testing
 

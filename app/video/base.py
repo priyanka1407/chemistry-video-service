@@ -18,6 +18,12 @@ class RenderResult:
     size_bytes: int
     provider: str
     narration_text: str
+    # Seconds actually billed by the provider's API, when that differs from
+    # the delivered clip's duration (e.g. Veo bills per second of raw
+    # generation, not per second of the final looped/trimmed output). None
+    # means "use duration_seconds for cost accounting" (true for the local
+    # provider, where there's no such distinction).
+    billed_seconds: float | None = None
 
 
 class VideoProvider(Protocol):

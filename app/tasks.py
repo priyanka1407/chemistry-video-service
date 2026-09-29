@@ -189,7 +189,7 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
     veo_fields: dict = {}
     if veo_result is not None:
         veo_qc = qc_validate(path=veo_result.path, narration_text=veo_result.narration_text, topic=topic)
-        veo_cost = costs.veo_cost(veo_result.duration_seconds)
+        veo_cost = costs.veo_cost(veo_result.billed_seconds if veo_result.billed_seconds is not None else veo_result.duration_seconds)
         cost += veo_cost
         veo_fields = dict(
             veo_video_location=str(veo_result.path), veo_duration_seconds=veo_result.duration_seconds,
