@@ -168,8 +168,10 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
     for attempt in range(1, settings.max_render_attempts + 1):
         repository.update_job(db, job, render_attempts=attempt)
         try:
-            local_result, veo_result = video_factory.render_both(topic, script, job.id) if settings.enable_dual_video_generation \
-                else (video_factory.render_with_fallback(topic, script, job.id), None)
+            if settings.enable_dual_video_generation:
+                local_result, veo_result, veo_render_error = video_factory.render_both(topic, script, job.id)
+            else:
+                local_result, veo_result, veo_render_error = video_factory.render_with_fallback(topic, script, job.id), None, "Dual video generation is disabled (ENABLE_DUAL_VIDEO_GENERATION=false)."
             break
         except Exception as exc:  # noqa: BLE001
             log.exception("Render attempt %d for topic %s failed.", attempt, topic.id)
@@ -195,7 +197,7 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
             veo_validation_passed=veo_qc.passed, veo_validation_details=veo_qc.details,
         )
     else:
-        veo_fields = dict(veo_error="Veo rendering failed or is disabled -- see server logs for this job.")
+        veo_fields = dict(veo_error=veo_render_error)
 
     output_review = run_output_review(
         question=topic.question, narration_text=script.narration_text,

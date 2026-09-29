@@ -198,7 +198,7 @@ def fake_video_pipeline(monkeypatch, tmp_path):
         return _stub_result(topic, script, job_id, "local")
 
     def fake_render_both(topic, script, job_id):
-        return _stub_result(topic, script, job_id, "local"), _stub_result(topic, script, job_id, "veo", duration=16.0)
+        return _stub_result(topic, script, job_id, "local"), _stub_result(topic, script, job_id, "veo", duration=16.0), None
 
     def fake_validate(*, path, narration_text, topic):
         return ValidationResult(True, {"checks": {"mocked": True}, "note": "real validator covered separately"})
