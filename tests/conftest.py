@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import tasks as tasks_module
 from app.celery_app import celery_app
+from app.config import settings
 from app.db import session as db_session
 from app.db.models import Base
 from app.judge.claims import Claim, ClaimList
@@ -45,6 +46,16 @@ from app.video.base import RenderResult
 def _celery_eager():
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True
+    yield
+
+
+# ---------------------------------------------------------------------------
+# Logging: redirect the rotating log files under a tmp dir instead of the
+# real repo's logs/ folder, same isolation principle as the DB/artifacts.
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _isolated_logs(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "log_dir", str(tmp_path / "logs"))
     yield
 
 

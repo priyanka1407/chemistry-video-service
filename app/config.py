@@ -106,10 +106,21 @@ class Settings(BaseSettings):
 
     # --- Runtime ---------------------------------------------------------
     log_level: str = "INFO"
+    log_dir: str = "./logs"
+    log_max_bytes: int = 5_000_000  # rotate each component's log file at ~5MB
+    log_backup_count: int = 3
 
     @property
     def artifacts_path(self) -> Path:
         path = Path(self.artifacts_dir)
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def logs_path(self) -> Path:
+        path = Path(self.log_dir)
         if not path.is_absolute():
             path = BASE_DIR / path
         path.mkdir(parents=True, exist_ok=True)

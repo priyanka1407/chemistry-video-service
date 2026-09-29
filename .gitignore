@@ -13,3 +13,8 @@ venv/
 # IS tracked.
 artifacts/*
 !artifacts/.gitkeep
+
+# Rotating log files (logs/api.log, logs/celery.log, ...) -- runtime output,
+# not part of the repo.
+logs/*
+!logs/.gitkeep

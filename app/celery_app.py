@@ -14,7 +14,7 @@ rest of the test suite already follows for Postgres/LLM/video.
 from __future__ import annotations
 
 from celery import Celery
-from celery.signals import worker_shutting_down
+from celery.signals import setup_logging, worker_shutting_down
 
 from app.config import settings
 
@@ -37,6 +37,18 @@ celery_app.conf.update(
 )
 
 celery_app.autodiscover_tasks(["app"], related_name="tasks")
+
+
+@setup_logging.connect
+def _on_setup_logging(**kwargs):
+    # Connecting anything to this signal tells Celery to skip its own
+    # CLI-driven logging setup entirely and use ours instead -- so a worker
+    # started with `--loglevel=info` still logs to the console AND to
+    # logs/celery.log (see app/logging_setup.py), instead of console-only
+    # output that vanishes once the terminal's scrollback is gone.
+    from app.logging_setup import configure_logging
+
+    configure_logging(component="celery")
 
 
 @worker_shutting_down.connect

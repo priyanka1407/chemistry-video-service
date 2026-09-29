@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    configure_logging()
+    configure_logging(component="api")
     init_engine()
     log.info("Startup complete -- no videos generated at startup; generation happens on first request per topic.")
     yield
