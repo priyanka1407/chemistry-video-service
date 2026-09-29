@@ -99,7 +99,7 @@ def _run_script_and_gates(topic: Topic, audience_age: int) -> tuple[Script, obje
     return script, grounding, teaching, attempts_used  # pragma: no cover - loop always returns above
 
 
-@celery_app.task(bind=True, max_retries=3, name="app.tasks.generate_topic_video_task")
+@celery_app.task(bind=True, max_retries=settings.max_task_retries, name="app.tasks.generate_topic_video_task")
 def generate_topic_video_task(self, job_id: str, audience_age: int = 15) -> str:
     db = get_session()
     try:
