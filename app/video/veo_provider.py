@@ -12,12 +12,26 @@ script becomes an expensive video of a repeating clip.
 Instead: generate one distinct clip PER SCRIPT SLIDE (capped at
 VEO_MAX_SEGMENTS), each prompted with that slide's own heading/bullets so
 the visual actually tracks what's being said, muxed with that slide's own
-narration, then concatenated. The final concatenated clip is looped up to
-VEO_MIN_DURATION_SECONDS if short, or trimmed down to VEO_MAX_DURATION_SECONDS
-if long -- so both the visible repetition AND the cost are bounded
-regardless of how long the underlying script narration is: Veo is only ever
-billed for `min(len(slides), VEO_MAX_SEGMENTS) * VEO_DURATION_SECONDS`
-seconds of raw generation, a fixed number independent of script length.
+narration, then concatenated.
+
+A script's full narration is usually longer than VEO_MAX_DURATION_SECONDS,
+so not every slide can fit -- but which ones are dropped is decided BEFORE
+generating a slide's Veo clip (each slide's own narration is measured via
+TTS, which is free, first), and only WHOLE slides are ever dropped, never a
+mid-sentence cut of one that's kept. The returned RenderResult's
+narration_text reflects exactly the kept slides' narration, not the full
+script, so the mechanical content-accuracy check that runs on this file
+(app/qc/validator.py) validates what this file actually says -- a capped
+Veo video is an honest shorter highlight of the lesson, not a truncated,
+sentence-cut copy of the full one (that's still the local/gTTS variant).
+The concatenated result is then looped up to VEO_MIN_DURATION_SECONDS if
+even the kept slides come in short, or hard-trimmed to
+VEO_MAX_DURATION_SECONDS as a last-resort safety net (only reachable if a
+single slide's own narration alone exceeds the cap).
+
+Cost is bounded the same way: Veo is only ever billed for
+`len(kept slides) * VEO_DURATION_SECONDS` seconds of raw generation, capped
+at VEO_MAX_SEGMENTS -- fixed and independent of how long the full script is.
 
 One real limitation this doesn't remove: within a single segment, the raw
 clip is still looped to cover that segment's own (shorter) narration chunk,
@@ -48,6 +62,27 @@ class VeoGenerationError(RuntimeError):
     pass
 
 
+def select_slides_within_budget(durations: list[float], max_duration: float) -> int:
+    """How many leading slides (in order) fit within `max_duration`, given
+    each candidate slide's own narration duration. Always keeps at least
+    one slide, even if it alone exceeds the budget (a single over-long
+    slide is a rare edge case handled by _enforce_duration_bounds's
+    last-resort trim, not by dropping every slide and delivering nothing).
+    Pure function, independent of ffmpeg/TTS/Veo, so the actual selection
+    decision is unit-testable on its own -- see tests/test_veo_provider.py.
+    """
+    if not durations:
+        return 0
+    total = durations[0]
+    count = 1
+    for d in durations[1:]:
+        if total + d > max_duration:
+            break
+        total += d
+        count += 1
+    return count
+
+
 class VeoProvider:
     name = "veo"
 
@@ -62,17 +97,32 @@ class VeoProvider:
         work_dir = settings.artifacts_path / f"_work_{job_id}"
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
-            slides = script.slides[: settings.veo_max_segments]
+            candidate_slides = script.slides[: settings.veo_max_segments]
+
+            # Synthesize every candidate's narration first (TTS is free/cheap)
+            # so which slides fit the duration budget is decided BEFORE
+            # spending a single Veo API call -- a dropped slide never costs
+            # a generation, and the ones kept are never cut mid-sentence:
+            # the cap is enforced by which WHOLE segments get included.
+            audio_paths: list[Path] = []
+            durations: list[float] = []
+            for i, slide in enumerate(candidate_slides):
+                audio_path = work_dir / f"narration_{i}.mp3"
+                tts.synthesize(slide.narration, audio_path)
+                audio_paths.append(audio_path)
+                durations.append(self._probe_duration(audio_path))
+
+            keep_count = select_slides_within_budget(durations, settings.veo_max_duration_seconds)
+            kept_slides = candidate_slides[:keep_count]
+
             segment_paths: list[Path] = []
-            for i, slide in enumerate(slides):
+            for i, slide in enumerate(kept_slides):
                 raw_path = work_dir / f"veo_raw_{i}.mp4"
                 self._generate_raw_clip(client, self._segment_prompt(topic, slide), raw_path)
 
                 segment_path = work_dir / f"segment_{i}.mp4"
                 if settings.veo_add_tts_audio_overlay:
-                    audio_path = work_dir / f"narration_{i}.mp3"
-                    tts.synthesize(slide.narration, audio_path)
-                    self._mux_segment(raw_path, audio_path, segment_path)
+                    self._mux_segment(raw_path, audio_paths[i], segment_path)
                 else:
                     shutil.copy(raw_path, segment_path)
                 segment_paths.append(segment_path)
@@ -88,13 +138,21 @@ class VeoProvider:
 
             size_bytes = final_path.stat().st_size
             duration = self._probe_duration(final_path)
-            billed_seconds = len(slides) * settings.veo_duration_seconds
+            billed_seconds = len(kept_slides) * settings.veo_duration_seconds
+            # Deliberately NOT script.narration_text: this file only ever
+            # speaks the kept slides' narration, so its own content-accuracy
+            # check (app/qc/validator.py, called with THIS narration_text)
+            # reflects what this specific file actually says -- a script
+            # longer than the duration cap means the Veo variant is a
+            # shorter highlight of the full (fully-narrated, in the local
+            # variant) lesson, not a truncated copy of it.
+            kept_narration_text = " ".join(s.narration for s in kept_slides)
             return RenderResult(
                 path=final_path,
                 duration_seconds=duration,
                 size_bytes=size_bytes,
                 provider=self.name,
-                narration_text=script.narration_text,
+                narration_text=kept_narration_text,
                 billed_seconds=billed_seconds,
             )
         finally:

@@ -190,6 +190,15 @@ factually grounded" is a query, not a re-watch.
 - **Output review has no eyes.** `app/judge/output_review.py` never inspects
   actual video frames -- it cannot catch wrong visuals or garbled on-screen
   text, only an incoherent/off-topic narration.
+- **The Veo variant is a capped highlight, not the full lesson.** A script
+  longer than `VEO_MAX_DURATION_SECONDS` (20s default) can't fit entirely in
+  the Veo video, so trailing slides are dropped whole (never cut
+  mid-sentence -- see `app/video/veo_provider.py`), and its own
+  content-accuracy QC check runs against only the slides actually kept, not
+  the full script. The **local/gTTS video remains the complete, fully
+  narrated lesson** that the grounding/teaching-quality judges verified in
+  full; Veo is a shorter, visually-distinct companion clip, not a second
+  full-length rendering.
 - **Race on a topic's very first two concurrent requests.** Two requests for
   the same brand-new topic arriving before either has finished generating
   will not deduplicate perfectly (see `app/db/repository.get_pending_topic_master`) --
