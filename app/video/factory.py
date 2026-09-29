@@ -36,3 +36,24 @@ def render_with_fallback(topic: Topic, script: Script, job_id: str) -> RenderRes
             log.exception("Veo rendering failed for topic %s -- falling back to the local provider.", topic.id)
             return LocalProvider().render(topic, script, job_id)
         raise
+
+
+def render_both(topic: Topic, script: Script, job_id: str) -> tuple[RenderResult, RenderResult | None]:
+    """Render with BOTH providers so a topic's cached master row carries a
+    gTTS/local video and a Veo video, each with its own metrics, per the
+    dual-generation requirement. The local render is required (cheap,
+    deterministic, no external API); a Veo failure is recorded and returned
+    as None rather than blocking delivery of the local video -- "no check
+    may be skipped silently" applies here too, so the caller must record why
+    the veo variant is missing, not just omit it."""
+    local_result = LocalProvider().render(topic, script, f"{job_id}_local")
+
+    veo_result: RenderResult | None = None
+    try:
+        from app.video.veo_provider import VeoProvider
+
+        veo_result = VeoProvider().render(topic, script, f"{job_id}_veo")
+    except Exception:
+        log.exception("Veo rendering failed for topic %s while generating the dual-provider master.", topic.id)
+
+    return local_result, veo_result

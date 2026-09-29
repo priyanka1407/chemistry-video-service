@@ -5,7 +5,10 @@ provider, so app/pipeline.py never knows which one ran.
 
 Veo clips are short (VEO_DURATION_SECONDS, typically 8s) and silent; this
 provider overlays the same TTS narration the local provider uses so every
-video, regardless of provider, satisfies the same QC audio-track check.
+video, regardless of provider, satisfies the same QC audio-track check. The
+raw clip is looped and the audio padded with trailing silence so the final
+delivered clip is always at least VEO_MIN_DURATION_SECONDS (default 16s)
+long, regardless of how short the narration or the raw Veo clip is.
 """
 from __future__ import annotations
 
@@ -95,19 +98,24 @@ class VeoProvider:
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
-    @staticmethod
-    def _overlay_audio(video_path: Path, audio_path: Path, out_path: Path) -> None:
-        # Loop the (short, silent) Veo clip to cover the full narration, then
-        # cut to the narration's length -- narration length drives the
-        # output, same convention as the local provider.
+    @classmethod
+    def _overlay_audio(cls, video_path: Path, audio_path: Path, out_path: Path) -> None:
+        # Loop the (short, silent) Veo clip to cover the full narration. If
+        # the narration is shorter than VEO_MIN_DURATION_SECONDS, pad the
+        # audio with trailing silence rather than delivering a clip under
+        # the required minimum -- the requirement is "at least 16s" every
+        # time, not "however long the narration happens to be".
+        narration_duration = cls._probe_duration(audio_path)
+        target = max(narration_duration, settings.veo_min_duration_seconds)
         subprocess.run(
             [
                 "ffmpeg", "-y",
                 "-stream_loop", "-1", "-i", str(video_path),
                 "-i", str(audio_path),
-                "-map", "0:v", "-map", "1:a",
+                "-filter_complex", f"[1:a]apad=whole_dur={target}[a]",
+                "-map", "0:v", "-map", "[a]",
                 "-c:v", "libx264", "-c:a", "aac", "-b:a", "160k",
-                "-shortest",
+                "-t", str(target),
                 str(out_path),
             ],
             capture_output=True, timeout=120, check=True,

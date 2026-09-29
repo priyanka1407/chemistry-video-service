@@ -1,0 +1,145 @@
+"""QualityReport: the single object every quality signal rolls up into, and
+the only thing the gating decision is made from -- BUILD_SPEC Part 6.
+
+A job is never delivered because rendering succeeded; it's delivered because
+this report says DELIVER. Every field here is persisted on the job row
+(VideoJob.quality_report) so "how many of the last N videos were factually
+grounded" is one query away, not a re-run of the whole pipeline.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+
+from app.judge.grounding import GroundingReport
+from app.judge.output_review import OutputReviewReport
+from app.judge.teaching_quality import TeachingQualityReport
+
+
+class GateDecision(str, Enum):
+    DELIVER = "DELIVER"
+    REGENERATE = "REGENERATE"
+    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
+    REJECT = "REJECT"
+
+
+@dataclass
+class QualityReport:
+    faithfulness_score: float
+    contradicted_claims: list[dict]
+    teaching_scores: dict[str, dict]
+    teaching_aggregate: float
+    output_checks: dict[str, str]  # check_name -> "PASS" | "FAIL" | "SKIP"
+    gate_decision: str
+    decision_reason: str
+    grounding_details: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _output_checks_from_qc(qc_details: dict | None) -> dict[str, str]:
+    if not qc_details:
+        return {"mechanical_qc": "SKIP"}
+    checks = qc_details.get("checks", {})
+    return {name: ("PASS" if ok else "FAIL") for name, ok in checks.items()} or {"mechanical_qc": "SKIP"}
+
+
+def build_quality_report(
+    *,
+    grounding: GroundingReport,
+    teaching: TeachingQualityReport,
+    output_review: OutputReviewReport | None,
+    qc_details: dict | None,
+    threshold_faithfulness: float,
+    threshold_teaching: float,
+    review_hold_margin: float,
+) -> QualityReport:
+    output_checks = _output_checks_from_qc(qc_details)
+    if output_review is not None:
+        output_checks["llm_output_review"] = (
+            "SKIP" if output_review.skipped else ("PASS" if output_review.passed else "FAIL")
+        )
+
+    contradicted = [
+        {"claim": c.claim, "reason": c.reason, "evidence_chunk_ids": c.evidence_chunk_ids}
+        for c in grounding.contradicted_claims
+    ]
+    teaching_scores = {
+        name: {"score": s.score, "justification": s.justification} for name, s in teaching.scores.items()
+    }
+
+    decision, reason = _decide(
+        grounding=grounding,
+        teaching=teaching,
+        output_checks=output_checks,
+        threshold_faithfulness=threshold_faithfulness,
+        threshold_teaching=threshold_teaching,
+        review_hold_margin=review_hold_margin,
+    )
+
+    return QualityReport(
+        faithfulness_score=grounding.faithfulness_score,
+        contradicted_claims=contradicted,
+        teaching_scores=teaching_scores,
+        teaching_aggregate=teaching.aggregate,
+        output_checks=output_checks,
+        gate_decision=decision.value,
+        decision_reason=reason,
+        grounding_details={
+            "total_factual_claims": grounding.total_factual_claims,
+            "supported": grounding.supported,
+            "not_found": grounding.not_found,
+            "pre_check_passed": grounding.pre_check.passed,
+            "unmatched_numbers": grounding.pre_check.unmatched_numbers,
+            "skipped": grounding.skipped,
+            "skip_reason": grounding.skip_reason,
+        },
+    )
+
+
+def _decide(
+    *,
+    grounding: GroundingReport,
+    teaching: TeachingQualityReport,
+    output_checks: dict[str, str],
+    threshold_faithfulness: float,
+    threshold_teaching: float,
+    review_hold_margin: float,
+) -> tuple[GateDecision, str]:
+    if grounding.skipped or teaching.skipped:
+        reasons = []
+        if grounding.skipped:
+            reasons.append(f"grounding judge skipped ({grounding.skip_reason})")
+        if teaching.skipped:
+            reasons.append(f"teaching-quality judge skipped ({teaching.skip_reason})")
+        return GateDecision.HOLD_FOR_REVIEW, "Cannot verify automatically: " + "; ".join(reasons)
+
+    if grounding.contradicted_claims:
+        claims = ", ".join(c.claim for c in grounding.contradicted_claims[:3])
+        return GateDecision.REJECT, f"Hard fail: contradicted claim(s) found: {claims}"
+
+    if any(v == "FAIL" for v in output_checks.values()):
+        failed = [k for k, v in output_checks.items() if v == "FAIL"]
+        return GateDecision.REGENERATE, f"Mechanical/output QC failed: {failed}"
+
+    faithfulness_ok = grounding.faithfulness_score >= threshold_faithfulness
+    teaching_ok = teaching.aggregate >= threshold_teaching
+
+    if faithfulness_ok and teaching_ok:
+        return GateDecision.DELIVER, "All gates passed."
+
+    near_faithfulness = grounding.faithfulness_score >= threshold_faithfulness * (1 - review_hold_margin)
+    near_teaching = teaching.aggregate >= threshold_teaching * (1 - review_hold_margin)
+    if (not faithfulness_ok and near_faithfulness) or (not teaching_ok and near_teaching):
+        return (
+            GateDecision.HOLD_FOR_REVIEW,
+            f"Close to threshold: faithfulness={grounding.faithfulness_score}, "
+            f"teaching_aggregate={teaching.aggregate}",
+        )
+
+    return (
+        GateDecision.REGENERATE,
+        f"Below threshold: faithfulness={grounding.faithfulness_score} "
+        f"(need {threshold_faithfulness}), teaching_aggregate={teaching.aggregate} (need {threshold_teaching})",
+    )

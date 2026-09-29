@@ -1,10 +1,11 @@
-"""Copies the current successful seed videos into submission/videos/ (which,
-unlike artifacts/, IS tracked in git) with a manifest mapping each learner
-query to the video it produced -- the "3 best generated videos... along with
-the input learner query that produced each" deliverable.
+"""Copies the current cached topic-master videos into submission/videos/
+(which, unlike artifacts/, IS tracked in git) with a manifest mapping each
+learner query to the video(s) it produced, its quality-gate decision, and
+its faithfulness/teaching-quality scores.
 
-Run this after the app has started at least once and all 3 seeds rendered
-successfully:
+Videos are no longer generated at startup -- request each of the 3 supported
+questions once first (via POST /generate, with a Celery worker running, or
+with CELERY_TASK_ALWAYS_EAGER=true for a quick local run), THEN export:
 
     python scripts/export_submission_videos.py
 """
@@ -50,15 +51,28 @@ def main() -> int:
 
         dest_name = f"{topic_id}.mp4"
         shutil.copy(src, OUT_DIR / dest_name)
+
+        variants = {}
+        for variant, location in (("local", job.local_video_location), ("veo", job.veo_video_location)):
+            if location and Path(location).exists():
+                variant_name = f"{topic_id}_{variant}.mp4"
+                shutil.copy(location, OUT_DIR / variant_name)
+                variants[variant] = variant_name
+
         manifest.append(
             {
                 "topic_id": topic_id,
                 "learner_query": topic.question if topic else job.query,
                 "video_file": dest_name,
+                "variants": variants,
                 "provider": job.provider,
                 "cost_usd": float(job.cost_usd),
                 "duration_seconds": job.duration_seconds,
                 "validation_passed": job.validation_passed,
+                "faithfulness_score": job.faithfulness_score,
+                "teaching_quality_score": job.teaching_quality_score,
+                "gate_decision": job.gate_decision,
+                "source_chunk_ids": job.source_chunk_ids,
                 "job_id": job.id,
             }
         )

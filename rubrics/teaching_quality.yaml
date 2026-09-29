@@ -1,0 +1,79 @@
+# Version-controlled rubric for the teaching-quality judge
+# (app/judge/teaching_quality.py). A prompt change here should be treated
+# like any other production prompt change -- review the diff.
+#
+# Each dimension is scored 1-5 by the judge against the band descriptors
+# below (observable properties, not "score 5 if excellent"), then combined
+# into a weighted aggregate gated against TEACHING_QUALITY_THRESHOLD.
+
+weights:
+  objective_coverage: 0.3
+  vocabulary_fit: 0.2
+  sequencing: 0.2
+  explanation_clarity: 0.2
+  engagement: 0.1
+
+dimensions:
+  objective_coverage:
+    description: "Does the script teach the stated learning objective (the topic's question)?"
+    bands:
+      5: "Directly and completely answers the question; a learner could restate the answer after watching."
+      4: "Answers the question with only minor omissions of secondary detail."
+      3: "Addresses the general subject area but leaves the specific question only partially answered."
+      2: "Mentions the topic but drifts into tangential material without answering the question."
+      1: "Does not address the stated question at all."
+
+  vocabulary_fit:
+    description: "Is the language appropriate for a high-school-aged audience?"
+    bands:
+      5: "All terms are either common vocabulary or defined in-line the first time they're used."
+      4: "Mostly accessible language; at most one term used without context."
+      3: "Understandable but leans technical in places without definition."
+      2: "Frequent undefined jargon a high-schooler would need to look up."
+      1: "Written for a specialist audience; largely inaccessible to the target age group."
+
+  sequencing:
+    description: "Do concepts build in a logical order, with prerequisites introduced first?"
+    bands:
+      5: "Each slide clearly builds on the previous one; no concept is used before it's introduced."
+      4: "Mostly logical order with one minor ordering issue that doesn't confuse the core idea."
+      3: "Generally sequential but with a noticeable jump that requires re-reading."
+      2: "Concepts are scrambled enough that a first-time learner would likely get lost."
+      1: "No discernible order; slides could be shuffled with no loss of coherence."
+
+  explanation_clarity:
+    description: "Are abstract ideas made concrete with examples or analogy?"
+    bands:
+      5: "Every abstract claim is grounded with a concrete example, number, or analogy."
+      4: "Most abstract claims are grounded; at most one is left unexplained."
+      3: "Some grounding, but at least one key abstract idea is stated without an example."
+      2: "Mostly abstract assertions with little to no concrete grounding."
+      1: "Purely abstract, jargon-heavy statements with no examples anywhere."
+
+  engagement:
+    description: "Would the target age group stay with it?"
+    bands:
+      5: "Conversational tone, varied sentence rhythm, a hook or relatable framing."
+      4: "Generally engaging with only a slightly dry stretch."
+      3: "Competent but flat; informative without being engaging."
+      2: "Monotone, list-like delivery likely to lose attention quickly."
+      1: "Reads like a dictionary entry; no attempt at engagement."
+
+few_shot_examples:
+  - label: "top band example (objective_coverage=5)"
+    script: >
+      Slide 1 (Overview): "The pH scale measures how acidic or basic a solution is, using the
+      concentration of hydrogen ions -- and it runs from 0 to 14." Slide 2 (Reading it):
+      "Below 7 is acidic, like lemon juice around pH 2. Exactly 7, like pure water, is neutral.
+      Above 7 is basic, like baking soda around pH 9." Slide 3 (The catch): "It's logarithmic,
+      not linear -- pH 4 is ten times more acidic than pH 5."
+    note: "Directly answers 'how does the pH scale work', in order, with concrete examples."
+
+  - label: "failing band example (sequencing=1, engagement=1)"
+    script: >
+      Slide 1: "pH is logarithmic and each step is a tenfold change in hydrogen ion
+      concentration." Slide 2: "The pH scale runs from 0 to 14." Slide 3: "Acids have a pH
+      below 7." Slide 4: "pH stands for potential of hydrogen and was introduced in 1909."
+    note: "States the advanced/derived fact (logarithmic scaling) before the basic definition,
+      then a definition, then a fragment, then an unrelated historical aside -- no build-up, no
+      examples, no voice."
