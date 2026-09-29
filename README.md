@@ -55,14 +55,28 @@ celery -A app.celery_app worker --loglevel=info
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+**On Windows**, Celery's default worker pool (`prefork`) relies on Unix
+`fork()` and fails with `PermissionError: [WinError 5] Access is denied`.
+Use the single-process `solo` pool instead (fine for local dev -- only one
+job runs at a time either way):
+
+```powershell
+celery -A app.celery_app worker --loglevel=info --pool=solo
+```
+
+There's also no native Windows build of `redis-server` -- run it via WSL,
+Docker (`docker run -p 6379:6379 redis`), or Memurai instead of installing
+it directly.
+
 Startup only ensures the `video_jobs` table exists -- **no video is generated
 at startup**. Open http://127.0.0.1:8000/ for a minimal page with a progress
 bar (polls `GET /jobs/{id}` every 1.5s), or http://127.0.0.1:8000/docs for
 the full API.
 
-For a quick local run without Redis/a separate worker at all, set
-`CELERY_TASK_ALWAYS_EAGER=true` -- `POST /generate` then runs the whole
-pipeline synchronously inline (this is what the test suite does).
+For a quick local run without Redis/a separate worker at all (e.g. on
+Windows, to sidestep both quirks above), set `CELERY_TASK_ALWAYS_EAGER=true`
+-- `POST /generate` then runs the whole pipeline synchronously inline (this
+is what the test suite does), and you only need `uvicorn` running.
 
 ## API
 
