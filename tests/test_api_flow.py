@@ -36,6 +36,7 @@ def test_first_request_for_a_topic_generates_and_delivers_it():
         assert job["veo_video_available"] is True
         assert job["gate_decision"] == "DELIVER"
         assert job["faithfulness_score"] == 1.0
+        assert job["veo_faithfulness_score"] == 1.0
         assert job["source_chunk_ids"]
 
         health = client.get("/health").json()
@@ -73,6 +74,13 @@ def test_quality_report_is_available_after_generation():
         assert body["gate_decision"] == "DELIVER"
         assert body["faithfulness_score"] == 1.0
         assert body["output_checks"]
+
+        assert set(body["video_scores"]) == {"local", "veo"}
+        for row in body["video_scores"].values():
+            assert 0 <= row["score_out_of_10"] <= 10
+            assert row["quality_label"] in {"Meets standard", "Below standard", "Unverified"}
+        assert body["video_scores"]["local"]["teaching_quality"] is not None
+        assert body["video_scores"]["veo"]["teaching_quality"] is None
 
 
 def test_polling_job_by_id_reflects_final_state():

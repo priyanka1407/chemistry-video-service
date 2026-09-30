@@ -31,7 +31,7 @@ from app.judge.output_review import run_output_review
 from app.judge.report import GateDecision, build_quality_report
 from app.judge.teaching_quality import run_teaching_quality_check
 from app.llm.openai_judge_client import JudgeUnavailable
-from app.llm.script_writer import Script, generate_script
+from app.llm.script_writer import Script, generate_highlight_script, generate_script
 from app.qc.validator import validate as qc_validate
 from app.rag.store import all_chunks_for_topic
 from app.schemas import JobStatus
@@ -65,17 +65,7 @@ def _run_script_and_gates(topic: Topic, audience_age: int) -> tuple[Script, obje
     for attempt in range(settings.max_regeneration_attempts + 1):
         attempts_used = attempt
         script = generate_script(topic, audience_age=audience_age, correction_issues=correction_issues)
-
-        try:
-            claims = extract_claims(script.narration_text)
-            grounding = run_grounding_check(claims=claims, topic_id=topic.id)
-        except JudgeUnavailable as exc:
-            log.warning("Claim extraction unavailable (%s) -- treating grounding as SKIPPED for job.", exc)
-            grounding = GroundingReport(
-                faithfulness_score=0.0, total_factual_claims=0, supported=0, not_found=0,
-                contradicted_claims=[], claim_results=[], non_factual_claims=[],
-                pre_check=PreCheckResult(passed=True), gate_passed=False, skipped=True, skip_reason=str(exc),
-            )
+        grounding = _extract_and_ground(script.narration_text, topic.id)
         teaching = run_teaching_quality_check(question=topic.question, audience_age=audience_age, script_text=script.narration_text)
 
         prelim = build_quality_report(
@@ -97,6 +87,64 @@ def _run_script_and_gates(topic: Topic, audience_age: int) -> tuple[Script, obje
         correction_issues = _correction_issues(grounding, teaching)
 
     return script, grounding, teaching, attempts_used  # pragma: no cover - loop always returns above
+
+
+def _extract_and_ground(narration_text: str, topic_id: str) -> GroundingReport:
+    """Shared claim-extraction + grounding-check call, with the same
+    JudgeUnavailable -> SKIPPED handling used for the main script."""
+    try:
+        claims = extract_claims(narration_text)
+        return run_grounding_check(claims=claims, topic_id=topic_id)
+    except JudgeUnavailable as exc:
+        log.warning("Claim extraction unavailable (%s) -- treating grounding as SKIPPED.", exc)
+        return GroundingReport(
+            faithfulness_score=0.0, total_factual_claims=0, supported=0, not_found=0,
+            contradicted_claims=[], claim_results=[], non_factual_claims=[],
+            pre_check=PreCheckResult(passed=True), gate_passed=False, skipped=True, skip_reason=str(exc),
+        )
+
+
+def _generate_and_verify_highlight(topic: Topic, audience_age: int, fallback_script: Script) -> tuple[Script, GroundingReport]:
+    """A short, purpose-built script for the Veo video (see
+    app/llm/script_writer.py::generate_highlight_script) -- sized to fit
+    VEO_MAX_DURATION_SECONDS from the moment it's written, not the full
+    lesson script trimmed after the fact. Independently verified against the
+    same source material via the same grounding pipeline as the main script.
+
+    If every regeneration attempt still fails grounding, falls back to the
+    main script's own first slide -- already verified as part of a script
+    that passed the full faithfulness gate, so it's a safe, grounded choice
+    even though its own faithfulness is re-checked in isolation here."""
+    correction_issues: list[str] | None = None
+    highlight_script = fallback_script
+    grounding: GroundingReport
+
+    for attempt in range(settings.max_regeneration_attempts + 1):
+        highlight_script = generate_highlight_script(topic, audience_age=audience_age, correction_issues=correction_issues)
+        grounding = _extract_and_ground(highlight_script.narration_text, topic.id)
+
+        if grounding.gate_passed or grounding.skipped or attempt >= settings.max_regeneration_attempts:
+            break
+
+        log.warning("Veo highlight script attempt %d for topic %s failed grounding -- regenerating.", attempt + 1, topic.id)
+        correction_issues = [
+            f"Claim not supported by the source material, remove or fix: \"{r.claim}\""
+            for r in grounding.claim_results if r.verdict != "SUPPORTED"
+        ] or [f"Claim contradicted the source: \"{c.claim}\" -- {c.reason}" for c in grounding.contradicted_claims]
+
+    if not (grounding.gate_passed or grounding.skipped):
+        log.warning(
+            "All highlight attempts failed grounding for topic %s -- falling back to the verified main script's first slide.",
+            topic.id,
+        )
+        highlight_script = Script(
+            title=fallback_script.title, slides=fallback_script.slides[:1],
+            source=fallback_script.source, model=fallback_script.model,
+            source_chunk_ids=fallback_script.source_chunk_ids,
+        )
+        grounding = _extract_and_ground(highlight_script.narration_text, topic.id)
+
+    return highlight_script, grounding
 
 
 @celery_app.task(bind=True, max_retries=settings.max_task_retries, name="app.tasks.generate_topic_video_task")
@@ -162,6 +210,17 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
         repository.record_stage(db, job, status=JobStatus.FAILED_VERIFICATION, stage="Failed verification", progress=100)
         return "failed_verification"
 
+    # --- a separate, deliberately short script for Veo, sized to fit the
+    # duration cap from the moment it's written (see
+    # app/llm/script_writer.py::generate_highlight_script and
+    # app/video/veo_provider.py) -- verified against the source material
+    # independently of the main (local-video) script above.
+    highlight_script: Script | None = None
+    highlight_grounding: GroundingReport | None = None
+    if settings.enable_dual_video_generation:
+        repository.record_stage(db, job, stage="Scripting (Veo highlight)", progress=50)
+        highlight_script, highlight_grounding = _generate_and_verify_highlight(topic, audience_age, script)
+
     # --- render both providers --------------------------------------------
     repository.record_stage(db, job, stage="Rendering (local)", progress=60)
     cost = 0.0
@@ -169,7 +228,7 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
         repository.update_job(db, job, render_attempts=attempt)
         try:
             if settings.enable_dual_video_generation:
-                local_result, veo_result, veo_render_error = video_factory.render_both(topic, script, job.id)
+                local_result, veo_result, veo_render_error = video_factory.render_both(topic, script, job.id, veo_script=highlight_script)
             else:
                 local_result, veo_result, veo_render_error = video_factory.render_with_fallback(topic, script, job.id), None, "Dual video generation is disabled (ENABLE_DUAL_VIDEO_GENERATION=false)."
             break
@@ -195,6 +254,7 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
             veo_video_location=str(veo_result.path), veo_duration_seconds=veo_result.duration_seconds,
             veo_size_bytes=veo_result.size_bytes, veo_cost_usd=round(veo_cost, 6),
             veo_validation_passed=veo_qc.passed, veo_validation_details=veo_qc.details,
+            veo_faithfulness_score=highlight_grounding.faithfulness_score if highlight_grounding else None,
         )
     else:
         veo_fields = dict(veo_error=veo_render_error)
@@ -209,6 +269,8 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
         threshold_faithfulness=settings.faithfulness_threshold,
         threshold_teaching=settings.teaching_quality_threshold,
         review_hold_margin=settings.review_hold_margin,
+        veo_grounding=highlight_grounding if veo_result is not None else None,
+        veo_qc_details=veo_qc.details if veo_qc else None,
     )
 
     delivered = local_result if settings.default_video_delivery_provider != "veo" or veo_result is None else veo_result

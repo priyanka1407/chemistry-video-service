@@ -75,6 +75,7 @@ class JobOut(BaseModel):
     source_chunk_ids: Optional[list[str]] = None
     faithfulness_score: Optional[float] = None
     teaching_quality_score: Optional[float] = None
+    veo_faithfulness_score: Optional[float] = None
     gate_decision: Optional[str] = None
     regeneration_attempts: int = 0
     validation_passed: Optional[bool] = None
@@ -105,6 +106,10 @@ class QualityReportOut(BaseModel):
     gate_decision: Optional[str] = None
     decision_reason: Optional[str] = None
     source_chunk_ids: list[str] = Field(default_factory=list)
+    # Per-video judge scorecard -- {"local": {...}, "veo": {...}}, each with
+    # faithfulness_pct, quality_label, and score_out_of_10: the table a
+    # human can use to judge either delivered video at a glance.
+    video_scores: dict[str, Any] = Field(default_factory=dict)
 
 
 class TopicOut(BaseModel):

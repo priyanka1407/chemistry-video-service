@@ -206,6 +206,12 @@ _PROGRESS_PAGE = """<!doctype html>
   .status { margin-top: 0.75rem; font-size: 0.95rem; }
   video { margin-top: 1rem; max-width: 100%; border-radius: 8px; }
   .error { color: #dc2626; }
+  table.scorecard { border-collapse: collapse; margin-top: 1rem; width: 100%; font-size: 0.9rem; display: none; }
+  table.scorecard th, table.scorecard td { border: 1px solid #cbd5e1; padding: 0.5rem 0.6rem; text-align: left; }
+  table.scorecard th { background: #f1f5f9; }
+  .label-ok { color: #16a34a; font-weight: 600; }
+  .label-bad { color: #dc2626; font-weight: 600; }
+  .label-unverified { color: #ca8a04; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -222,9 +228,35 @@ _PROGRESS_PAGE = """<!doctype html>
   <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
   <div class="status" id="status">Idle.</div>
   <video id="video" controls style="display:none"></video>
+  <table class="scorecard" id="scorecard">
+    <thead>
+      <tr><th>Video</th><th>Faithfulness to Source</th><th>Quality Standard</th><th>Score (1-10)</th></tr>
+    </thead>
+    <tbody id="scorecard-body"></tbody>
+  </table>
 
 <script>
 let timer = null;
+const VIDEO_LABELS = { local: 'Local (gTTS)', veo: 'Veo' };
+const LABEL_CLASS = { 'Meets standard': 'label-ok', 'Below standard': 'label-bad', 'Unverified': 'label-unverified' };
+
+function renderScorecard(videoScores) {
+  const table = document.getElementById('scorecard');
+  const body = document.getElementById('scorecard-body');
+  const rows = Object.entries(videoScores || {});
+  if (!rows.length) { table.style.display = 'none'; return; }
+  body.innerHTML = rows.map(([variant, row]) => {
+    const cls = LABEL_CLASS[row.quality_label] || '';
+    return `<tr>
+      <td>${VIDEO_LABELS[variant] || variant}</td>
+      <td>${row.faithfulness_pct}%</td>
+      <td class="${cls}">${row.quality_label}</td>
+      <td>${row.score_out_of_10} / 10</td>
+    </tr>`;
+  }).join('');
+  table.style.display = 'table';
+}
+
 async function poll(jobId) {
   const res = await fetch(`/jobs/${jobId}`);
   const job = await res.json();
@@ -233,10 +265,17 @@ async function poll(jobId) {
   const terminal = !['PENDING', 'QUEUED', 'PROCESSING'].includes(job.status);
   if (terminal) {
     clearInterval(timer);
-    if (job.status === 'SUCCESS') {
-      const v = document.getElementById('video');
-      v.src = `/jobs/${jobId}/video`;
-      v.style.display = 'block';
+    if (job.status === 'SUCCESS' || job.status === 'HOLD_FOR_REVIEW') {
+      if (job.status === 'SUCCESS') {
+        const v = document.getElementById('video');
+        v.src = `/jobs/${jobId}/video`;
+        v.style.display = 'block';
+      }
+      const reportRes = await fetch(`/jobs/${jobId}/report`);
+      if (reportRes.ok) {
+        const report = await reportRes.json();
+        renderScorecard(report.video_scores);
+      }
     } else if (job.error_message) {
       document.getElementById('status').textContent += ` -- ${job.error_message}`;
       document.getElementById('status').classList.add('error');
@@ -246,6 +285,7 @@ async function poll(jobId) {
 
 document.getElementById('submit').addEventListener('click', async () => {
   document.getElementById('video').style.display = 'none';
+  document.getElementById('scorecard').style.display = 'none';
   document.getElementById('status').classList.remove('error');
   const query = document.getElementById('query').value;
   const res = await fetch('/generate', {

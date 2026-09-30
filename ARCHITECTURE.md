@@ -144,20 +144,40 @@ A single Veo generation call only produces a short, silent clip
 (`VEO_DURATION_SECONDS`, default 6s) -- looping that one clip for an entire
 script's narration would show the same few seconds on repeat for the whole
 video, and bill Veo's per-second rate for however long that loop runs (a
-long script becomes an expensive video of one repeating clip). Instead,
-`VeoProvider` generates one distinct clip **per script slide** (capped at
-`VEO_MAX_SEGMENTS`, default 3), each prompted with that slide's own
-heading/bullets so the visual tracks what's actually being said, muxed with
-that slide's own narration, then concatenated (`app/video/veo_provider.py`
-mirrors the same per-segment mux + ffmpeg-concat pattern the local provider
-already uses for its slides). The concatenated result is then looped up to
-`VEO_MIN_DURATION_SECONDS` (16s) if short, or trimmed down to
-`VEO_MAX_DURATION_SECONDS` (20s) if long -- so both the visible repetition
-*and* the cost are bounded regardless of script length: Veo only ever bills
-for `min(slide_count, VEO_MAX_SEGMENTS) * VEO_DURATION_SECONDS` seconds of
-raw generation, a fixed number independent of how long the narration is
-(`RenderResult.billed_seconds` carries this for cost accounting, since it
-can differ from the final clip's `duration_seconds`).
+long script becomes an expensive video of one repeating clip).
+
+The fix has two parts. First, Veo doesn't narrate the same script as the
+local video at all: `app/llm/script_writer.py::generate_highlight_script`
+retrieve-then-generates a SEPARATE, deliberately short script, word-budgeted
+(`_WORDS_PER_SECOND`) to fit `VEO_MAX_DURATION_SECONDS` from the moment it's
+written -- not the full lesson script, trimmed after the fact. It's
+independently verified against the same source material by the same
+grounding judge (`app/tasks.py::_generate_and_verify_highlight`, its own
+regeneration loop, falling back to the main script's already-verified first
+slide if every attempt still fails grounding). This is what "not first
+created and then truncated" means concretely: the content is right-sized
+before a single Veo API call is made, and its faithfulness is checked on its
+own, not inherited from the full script.
+
+Second, `VeoProvider` generates one distinct clip **per highlight-script
+slide** (capped at `VEO_MAX_SEGMENTS`, default 3), each prompted with that
+slide's own heading/bullets so the visual tracks what's actually being said,
+muxed with that slide's own narration, then concatenated
+(`app/video/veo_provider.py` mirrors the same per-segment mux +
+ffmpeg-concat pattern the local provider already uses for its slides). Each
+candidate slide's narration is measured via TTS (free) *before* any Veo API
+call, and `select_slides_within_budget` (a pure, unit-tested function)
+decides how many whole leading slides fit the duration cap -- a slide is
+dropped whole or not at all, never cut mid-sentence, and a dropped slide
+never costs a generation call either. The concatenated result is then
+looped up to `VEO_MIN_DURATION_SECONDS` (16s) as a last-resort *if* even the
+kept slides come in short (rare, given the word budget), or hard-trimmed to
+`VEO_MAX_DURATION_SECONDS` (20s) as a last-resort safety net reachable only
+if a single slide's own narration alone exceeds the cap. Cost is bounded the
+same way Veo only ever bills for `len(kept slides) * VEO_DURATION_SECONDS`
+seconds of raw generation (`RenderResult.billed_seconds`, since this can
+differ from the final clip's `duration_seconds`), fixed and independent of
+narration length.
 
 This doesn't eliminate repetition entirely -- within a single segment, the
 raw clip is still looped to cover that segment's own (now much shorter)

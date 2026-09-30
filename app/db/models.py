@@ -76,6 +76,11 @@ class VideoJob(Base):
     veo_validation_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     veo_validation_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     veo_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The Veo highlight script's OWN faithfulness score -- independent of
+    # faithfulness_score below, which is the main/local script's. They can
+    # differ, since the highlight is a separately generated, separately
+    # verified short script (see app/tasks.py::_generate_and_verify_highlight).
+    veo_faithfulness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # --- QC (mechanical, on the delivered variant) --------------------------
     validation_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

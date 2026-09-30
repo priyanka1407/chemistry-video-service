@@ -159,3 +159,115 @@ def generate_script(topic: Topic, *, audience_age: int = 15, correction_issues: 
 
     log.error("All %d script attempts failed for topic %s -- using curated fallback.", settings.max_script_attempts, topic.id)
     return _curated_fallback(topic, chunk_ids)
+
+
+# ---------------------------------------------------------------------------
+# Highlight script: a separate, deliberately SHORT script for the Veo video,
+# sized to fit a target duration from the moment it's written -- not the
+# full lesson script cut down after the fact. See app/video/veo_provider.py
+# for why: a video built from oversized narration and then trimmed can cut
+# audio mid-sentence and misrepresent what the file actually says.
+# ---------------------------------------------------------------------------
+_WORDS_PER_SECOND = 2.3  # conservative spoken-word rate, leaves buffer for TTS timing variance
+
+_HIGHLIGHT_PROMPT_TEMPLATE = """You are writing a VERY SHORT highlight narration -- a {target_seconds}-second \
+teaser, NOT the full lesson -- for a short-form video answering: "{question}"
+
+Write 1 to {max_slides} short slides. Each slide needs a short heading, 1 short bullet point, and ONE \
+short sentence of spoken narration.
+
+You MUST base every factual statement ONLY on the source material below -- do not add facts, \
+numbers, or claims that are not stated in it.
+
+Source material (id: text):
+{source_material}
+
+Hard requirements:
+- The TOTAL narration across ALL slides, combined, must be at most {max_words} words. It will be \
+spoken aloud in under {target_seconds} seconds, so brevity is mandatory -- prefer fewer, punchier \
+slides over more, wordy ones.
+- The narration across all slides, combined, MUST naturally use these terms at least once each: \
+{must_mention}.
+- Do not mention that you are an AI, that this is generated, or that there is "source material".
+{correction_block}"""
+
+
+def _validate_highlight(script: GeneratedScript, topic: Topic, max_words: int) -> str | None:
+    if not (1 <= len(script.slides) <= settings.veo_max_segments):
+        return f"expected 1-{settings.veo_max_segments} slides, got {len(script.slides)}"
+    narration = " ".join(s.narration for s in script.slides)
+    word_count = len(narration.split())
+    if word_count > max_words:
+        return f"narration is {word_count} words, over the {max_words}-word budget"
+    missing = [term for term in topic.must_mention if term.lower() not in narration.lower()]
+    if missing:
+        return f"narration is missing required terms: {missing}"
+    for slide in script.slides:
+        if not slide.heading.strip() or not slide.narration.strip():
+            return "a slide had an empty heading or narration"
+    return None
+
+
+def _curated_highlight_fallback(topic: Topic, source_chunk_ids: tuple[str, ...]) -> Script:
+    # The curated script's first slide alone: guaranteed grounded (it's
+    # hand-written against the same source material) and guaranteed short,
+    # used only if the LLM can't produce a valid highlight after every retry.
+    return Script(
+        title=topic.question, slides=topic.curated_script[:1], source="curated", model=None,
+        source_chunk_ids=source_chunk_ids,
+    )
+
+
+def generate_highlight_script(
+    topic: Topic, *, audience_age: int = 15, target_seconds: int | None = None, correction_issues: list[str] | None = None,
+) -> Script:
+    """Retrieve-then-generate a short highlight script, word-budgeted to fit
+    `target_seconds` (default VEO_MAX_DURATION_SECONDS) of spoken narration --
+    for the Veo video, which is a short companion clip, not a second
+    full-length rendering of the lesson (that's the local/gTTS video)."""
+    target = target_seconds if target_seconds is not None else settings.veo_max_duration_seconds
+    max_words = max(int(target * _WORDS_PER_SECOND), 12)
+
+    chunks = tuple(all_chunks_for_topic(topic.id))
+    chunk_ids = tuple(c.id for c in chunks)
+
+    try:
+        chat = get_chat_model()
+    except ProviderNotConfigured as exc:
+        log.warning("Chat model unavailable (%s) for highlight script, topic %s -- using curated fallback.", exc, topic.id)
+        return _curated_highlight_fallback(topic, chunk_ids)
+
+    structured_chat = chat.with_structured_output(GeneratedScript)
+    correction_block = _CORRECTION_TEMPLATE.format(issues="\n".join(f"- {i}" for i in correction_issues)) if correction_issues else ""
+    prompt = _HIGHLIGHT_PROMPT_TEMPLATE.format(
+        question=topic.question,
+        target_seconds=target,
+        max_slides=settings.veo_max_segments,
+        source_material=_format_source_material(chunks),
+        max_words=max_words,
+        must_mention=", ".join(topic.must_mention),
+        correction_block=correction_block,
+    )
+
+    for attempt in range(1, settings.max_script_attempts + 1):
+        try:
+            result: GeneratedScript = structured_chat.invoke(prompt)  # type: ignore[assignment]
+            error = _validate_highlight(result, topic, max_words)
+            if error is None:
+                slides = tuple(
+                    Slide(heading=s.heading, bullets=tuple(s.bullets), narration=s.narration)
+                    for s in result.slides
+                )
+                return Script(
+                    title=result.title, slides=slides, source="llm", model=settings.script_model,
+                    source_chunk_ids=chunk_ids,
+                )
+            log.warning(
+                "Highlight script attempt %d/%d for topic %s failed validation: %s",
+                attempt, settings.max_script_attempts, topic.id, error,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("Highlight script attempt %d/%d for topic %s raised an error.", attempt, settings.max_script_attempts, topic.id)
+
+    log.error("All %d highlight script attempts failed for topic %s -- using curated fallback.", settings.max_script_attempts, topic.id)
+    return _curated_highlight_fallback(topic, chunk_ids)

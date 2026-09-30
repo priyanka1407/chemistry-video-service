@@ -208,10 +208,10 @@ def fake_video_pipeline(monkeypatch, tmp_path):
     def fake_render_with_fallback(topic, script, job_id):
         return _stub_result(topic, script, job_id, "local")
 
-    def fake_render_both(topic, script, job_id):
+    def fake_render_both(topic, script, job_id, *, veo_script=None):
         return (
             _stub_result(topic, script, job_id, "local"),
-            _stub_result(topic, script, job_id, "veo", duration=20.0, billed_seconds=18.0),
+            _stub_result(topic, veo_script or script, job_id, "veo", duration=20.0, billed_seconds=18.0),
             None,
         )
 

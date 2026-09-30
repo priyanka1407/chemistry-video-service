@@ -145,6 +145,26 @@ because it passed its quality gates. Every job's full `QualityReport` is
 persisted (`GET /jobs/{id}/report`), so "how many of the last N videos were
 factually grounded" is a query, not a re-watch.
 
+**Judge scorecard.** `GET /jobs/{id}/report`'s `video_scores` field is a
+table, one row per delivered video variant, meant to be read at a glance
+rather than parsed:
+
+| Video | Faithfulness to Source | Quality Standard | Score (1-10) |
+|---|---|---|---|
+| Local (gTTS) | 100% | Meets standard | 9.3 |
+| Veo | 95% | Meets standard | 8.7 |
+
+`faithfulness_pct` comes straight from that variant's own grounding check
+(`faithfulness_score` for local, `veo_faithfulness_score` for Veo -- they're
+computed independently, from two separately-generated scripts).
+`quality_label` is `Meets standard` / `Below standard` / `Unverified`,
+derived from that variant's own mechanical+output QC and (for local only)
+the teaching-quality gate. `score_out_of_10` blends faithfulness (70%) and
+QC (30%) for Veo, or faithfulness (40%) + teaching quality (40%) + QC (20%)
+for local -- one number to sort/compare videos by without reading every
+field. The same table renders as an actual HTML table on the progress page
+(`/`) once a job finishes.
+
 1. **Claim extraction** (`app/judge/claims.py`) -- an OpenAI structured-output
    call decomposes the narration into atomic claims, tagging each
    `is_factual` (opinion/framing/transitions are excluded from scoring but
@@ -190,14 +210,19 @@ factually grounded" is a query, not a re-watch.
 - **Output review has no eyes.** `app/judge/output_review.py` never inspects
   actual video frames -- it cannot catch wrong visuals or garbled on-screen
   text, only an incoherent/off-topic narration.
-- **The Veo variant is a capped highlight, not the full lesson.** A script
-  longer than `VEO_MAX_DURATION_SECONDS` (20s default) can't fit entirely in
-  the Veo video, so trailing slides are dropped whole (never cut
-  mid-sentence -- see `app/video/veo_provider.py`), and its own
-  content-accuracy QC check runs against only the slides actually kept, not
-  the full script. The **local/gTTS video remains the complete, fully
-  narrated lesson** that the grounding/teaching-quality judges verified in
-  full; Veo is a shorter, visually-distinct companion clip, not a second
+- **The Veo variant is a short, separately-verified highlight, not the full
+  lesson.** Veo doesn't reuse the local video's full script trimmed down --
+  it gets its own purpose-built script
+  (`app/llm/script_writer.py::generate_highlight_script`), word-budgeted to
+  fit `VEO_MAX_DURATION_SECONDS` (20s default) *from the moment it's
+  written*, retrieved from the same source material and independently
+  verified by the same grounding judge (`veo_faithfulness_score`, separate
+  from the local video's `faithfulness_score`). If even that still runs
+  long, whole slides are dropped -- never cut mid-sentence -- and never more
+  than fit the budget (`app/video/veo_provider.py::select_slides_within_budget`).
+  The **local/gTTS video remains the complete, fully narrated lesson**
+  graded against the full teaching-quality rubric; Veo is a shorter,
+  visually-distinct, independently-faithful companion clip, not a second
   full-length rendering.
 - **Race on a topic's very first two concurrent requests.** Two requests for
   the same brand-new topic arriving before either has finished generating

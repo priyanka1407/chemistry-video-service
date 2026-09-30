@@ -74,6 +74,44 @@ def test_skipped_judge_holds_for_review_rather_than_silently_passing():
     assert "skipped" in report.decision_reason
 
 
+def test_video_scores_present_for_local_after_rendering():
+    report = _report(qc_details={"checks": {"has_audio_stream": True, "has_video_stream": True}})
+    assert "local" in report.video_scores
+    row = report.video_scores["local"]
+    assert row["teaching_quality"] == 4.5
+    assert row["quality_label"] == "Meets standard"
+    assert 0 <= row["score_out_of_10"] <= 10
+
+
+def test_video_scores_omits_local_before_rendering():
+    # The preliminary (pre-render) report call passes qc_details=None and no
+    # output_review -- nothing to score yet, so no premature "local" row.
+    report = _report(qc_details=None, output_review=None)
+    assert "local" not in report.video_scores
+
+
+def test_video_scores_includes_veo_row_with_no_teaching_dimension():
+    report = _report(
+        qc_details={"checks": {"has_audio_stream": True}},
+        veo_grounding=_grounding(faithfulness=0.9),
+        veo_qc_details={"checks": {"has_audio_stream": True, "duration_in_range": True}},
+    )
+    assert "veo" in report.video_scores
+    veo_row = report.video_scores["veo"]
+    assert veo_row["teaching_quality"] is None
+    assert veo_row["faithfulness_pct"] == 90.0
+    assert veo_row["quality_label"] == "Meets standard"
+
+
+def test_video_scores_veo_row_flags_failed_qc_as_below_standard():
+    report = _report(
+        qc_details={"checks": {"has_audio_stream": True}},
+        veo_grounding=_grounding(faithfulness=1.0),
+        veo_qc_details={"checks": {"has_audio_stream": False}},
+    )
+    assert report.video_scores["veo"]["quality_label"] == "Below standard"
+
+
 def test_deterministic_pre_check_flags_a_number_not_in_the_source():
     result = deterministic_pre_check("The pH scale runs from 0 to 9999.", "ph_scale")
     assert result.passed is False
