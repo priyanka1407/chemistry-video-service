@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -41,10 +41,15 @@ def _get_client():
     return _client
 
 
-def judge_structured(*, system: str, user: str, response_model: type[T]) -> tuple[T, dict]:
+def judge_structured(*, system: str, user: str | list[dict[str, Any]], response_model: type[T]) -> tuple[T, dict]:
     """One structured-output call to the judge model, with retry on
     transient failure. Returns (parsed_result, usage) where usage carries
-    prompt/completion token counts for cost accounting."""
+    prompt/completion token counts for cost accounting.
+
+    `user` is normally plain text; app/judge/visual_review.py passes a list
+    of OpenAI content parts (text + image_url) instead, for the one judge
+    that reviews actual rendered frames rather than script text -- the
+    Chat Completions API accepts either shape as message content unchanged."""
     client = _get_client()
     last_exc: Exception | None = None
 

@@ -30,6 +30,7 @@ from app.db.models import Base
 from app.judge.claims import Claim, ClaimList
 from app.judge.grounding import ClaimVerdict
 from app.judge.output_review import OutputReviewVerdict
+from app.judge.visual_review import VisualReviewVerdict
 from app.llm import script_writer as script_writer_module
 from app.llm import semantic_gate
 from app.llm.script_writer import GeneratedScript, GeneratedSlide
@@ -175,6 +176,12 @@ class FakeJudge:
         if name == "OutputReviewVerdict":
             return OutputReviewVerdict(coherent_and_on_topic=True, concerns=[], justification="Coherent and on-topic."), usage
 
+        if name == "VisualReviewVerdict":
+            return VisualReviewVerdict(
+                coherent_and_on_topic=True, garbled_or_incorrect_on_screen_text=False,
+                concerns=[], justification="Frames look coherent and on-topic.",
+            ), usage
+
         if name == "TeachingQualityScores":
             fields = {f: {"score": 5, "justification": "Meets the top band."} for f in response_model.model_fields}
             return response_model(**fields), usage
@@ -218,7 +225,17 @@ def fake_video_pipeline(monkeypatch, tmp_path):
     def fake_validate(*, path, narration_text, topic):
         return ValidationResult(True, {"checks": {"mocked": True}, "note": "real validator covered separately"})
 
+    def fake_extract_sample_frames(video_path, count, out_dir):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for i in range(count):
+            p = out_dir / f"frame_{i}.jpg"
+            p.write_bytes(b"FAKE-JPEG-BYTES")
+            paths.append(p)
+        return paths
+
     monkeypatch.setattr(tasks_module.video_factory, "render_with_fallback", fake_render_with_fallback)
     monkeypatch.setattr(tasks_module.video_factory, "render_both", fake_render_both)
     monkeypatch.setattr(tasks_module, "qc_validate", fake_validate)
+    monkeypatch.setattr(tasks_module, "extract_sample_frames", fake_extract_sample_frames)
     yield

@@ -187,9 +187,18 @@ field. The same table renders as an actual HTML table on the progress page
    ffprobe-verified video/audio streams, sane duration, on-topic keyword check.
 6. **Output review judge** (`app/judge/output_review.py`) -- an OpenAI review
    of the finished script + narration + mechanical QC facts, checking the
-   result reads as coherent and on-topic (a text-only proxy for the spec's
-   optional vision-based frame spot-check -- see Known limitations).
-7. **Gate aggregation** (`app/judge/report.py::build_quality_report`) --
+   narration reads as coherent and on-topic. Text-only -- doesn't look at
+   the video itself; see the next step for that.
+7. **Visual review judge** (`app/judge/visual_review.py`) -- the ONLY check
+   that looks at actual rendered frames. `app/video/frames.py` extracts a
+   handful of evenly-spaced frames (ffmpeg, free) from each delivered video,
+   and OpenAI reviews them for coherence and garbled/incorrect on-screen
+   text -- catching what no text-only check can: a generative video model
+   (Veo) hallucinating wrong visuals or inventing an incorrect diagram, even
+   though the script it was prompted from is faithful. Cheap by design (5
+   frames, low image detail -- a fraction of a cent per video, independent
+   of video length; see Cost below).
+8. **Gate aggregation** (`app/judge/report.py::build_quality_report`) --
    rolls all of the above into one `QualityReport` with a `gate_decision`:
    `DELIVER`, `REGENERATE` (below threshold -> up to `MAX_REGENERATION_ATTEMPTS`
    retries, feeding the specific failed claims/dimensions back as correction
@@ -207,9 +216,11 @@ field. The same table renders as an actual HTML table on the progress page
   no golden-set calibration harness is included in this iteration (only the
   gating/aggregation logic is unit-tested against constructed reports, see
   `tests/test_judge.py`).
-- **Output review has no eyes.** `app/judge/output_review.py` never inspects
-  actual video frames -- it cannot catch wrong visuals or garbled on-screen
-  text, only an incoherent/off-topic narration.
+- **The visual review judge is a spot-check, not a frame-by-frame audit.**
+  It samples `VISUAL_REVIEW_FRAME_COUNT` (default 5) evenly-spaced frames,
+  not every frame -- a problem confined to frames between samples could
+  still slip through. It's a real improvement over text-only review, not a
+  guarantee.
 - **The Veo variant is a short, separately-verified highlight, not the full
   lesson.** Veo doesn't reuse the local video's full script trimmed down --
   it gets its own purpose-built script
@@ -249,6 +260,9 @@ application code. Highlights beyond the original LLM/video-provider knobs:
 | `VEO_MAX_SEGMENTS` | `3` | Up to this many distinct visuals are generated (one per script slide) instead of looping a single clip |
 | `VEO_DURATION_SECONDS` | `6` | Seconds requested from the Veo API *per segment* -- this is what's actually billed, fixed regardless of script length |
 | `VEO_MIN_DURATION_SECONDS` / `VEO_MAX_DURATION_SECONDS` | `16` / `20` | The final concatenated clip is looped up to at least the min and trimmed down to at most the max |
+| `LOCAL_MAX_DURATION_SECONDS` | `30` | The local/gTTS video's cap, enforced the same whole-slide-never-mid-sentence way as Veo's |
+| `ENABLE_VISUAL_REVIEW` | `true` | Run the vision-based judge on sampled frames from each delivered video |
+| `VISUAL_REVIEW_FRAME_COUNT` | `5` | Frames sampled per video for the visual review judge |
 
 ## Swapping the LLM provider
 
@@ -270,19 +284,29 @@ video-generation abstraction, so the Veo provider
 
 ## Cost and quality tradeoffs
 
-Each newly-generated topic now costs: 1 embedding call, 1+ script calls
-(regenerated up to `MAX_REGENERATION_ATTEMPTS` times on a failed gate), 1
-claim-extraction judge call, ~4-8 per-claim grounding judge calls, 1
-teaching-quality judge call, 1 output-review judge call, a local render
-(fraction of a cent), and a Veo render. The Veo cost is now **fixed**
-regardless of script length: `VEO_MAX_SEGMENTS * VEO_DURATION_SECONDS *
+Each newly-generated topic now costs: 1 embedding call, 2+ script calls (main
++ highlight, each regenerated up to `MAX_REGENERATION_ATTEMPTS` times on a
+failed gate), 2 claim-extraction judge calls, ~4-8 per-claim grounding judge
+calls (x2, one set per script), 1 teaching-quality judge call, 1
+output-review judge call, up to 2 visual-review judge calls (one per
+delivered video, a fraction of a cent each -- see below), a local render
+(fraction of a cent), and a Veo render. The Veo cost is **fixed** regardless
+of script length: `VEO_MAX_SEGMENTS * VEO_DURATION_SECONDS *
 COST_VEO_PER_SECOND` (~$2.70 at the defaults, 3 segments x 6s x $0.15/s) --
 Veo only ever bills for the raw per-segment generation, never for however
-long the final clip ends up being looped/trimmed to. **Since only 3 topics
-are ever generated -- once each, the first time they're requested -- and
-every later request for them is a DB read, the marginal cost of arbitrary
-request volume is one embedding call.** See ARCHITECTURE.md for the full
-reliability design.
+long the final clip ends up being looped/trimmed to.
+
+**Visual review cost, concretely:** frame extraction is pure ffmpeg -- free,
+regardless of video length. The judge call itself costs based on frames
+sampled, not video duration: at the defaults (5 frames, `low` detail,
+`gpt-4o-mini`), that's ~825 input tokens (~$0.0002) per video. Even a
+pessimistic worst case (50 frames, `high` detail, `gpt-4o`) stays under
+$0.10. This is the cheapest signal in the whole pipeline by a wide margin.
+
+**Since only 3 topics are ever generated -- once each, the first time
+they're requested -- and every later request for them is a DB read, the
+marginal cost of arbitrary request volume is one embedding call.** See
+ARCHITECTURE.md for the full reliability design.
 
 ## Testing
 
@@ -294,12 +318,16 @@ Fully offline: SQLite instead of Postgres, deterministic fake
 embeddings/chat model, a deterministic fake OpenAI judge (exercises the real
 gating/aggregation logic against a controlled input -- see `tests/test_judge.py`
 for gate-decision unit tests against constructed reports, including a
-`CONTRADICTED`/hard-fail case), Celery forced into `task_always_eager` mode
+`CONTRADICTED`/hard-fail case, and `tests/test_visual_review.py` for the
+vision judge's pass/fail paths), Celery forced into `task_always_eager` mode
 (no Redis/worker needed), a stub video file with QC bypassed for the
-integration tests, and the *real* ffprobe-based QC validator exercised
-directly (via real ffmpeg-generated clips) in `tests/test_qc_validator.py`
--- skipped automatically if ffmpeg isn't on PATH. `tests/test_rag.py` parses
-the real committed source PDF (no mocking -- it's a local file).
+integration tests, `tests/test_duration_budget.py` for the whole-slide
+duration-cap logic shared by both video providers, `tests/test_script_writer.py`
+for both scripts' word-budget validation, and the *real* ffprobe/ffmpeg-based
+checks exercised directly against real generated clips in
+`tests/test_qc_validator.py` and `tests/test_frame_extraction.py` -- skipped
+automatically if ffmpeg isn't on PATH. `tests/test_rag.py` parses the real
+committed source PDF (no mocking -- it's a local file).
 
 ## Submission video export
 

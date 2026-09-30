@@ -3,6 +3,17 @@ mux, one segment per slide, concatenated into a single mp4.
 
 Cost is effectively just the (usually free) TTS call -- no per-second
 generative-video billing -- which is why this is the default VIDEO_PROVIDER.
+
+Capped at LOCAL_MAX_DURATION_SECONDS the same way Veo is capped, and for the
+same reason: each candidate slide's narration is measured via TTS BEFORE any
+image is drawn or ffmpeg mux runs, and select_slides_within_budget decides
+how many whole leading slides fit -- a slide is dropped whole or not at all,
+never cut mid-sentence. The main script itself
+(app/llm/script_writer.py::generate_script) is now word-budgeted to target
+this duration from the moment it's written, so this selection should rarely
+need to drop anything in practice; it's a safety net, not the primary
+sizing mechanism, mirroring the same "not first created and then truncated"
+design as the Veo highlight script.
 """
 from __future__ import annotations
 
@@ -20,6 +31,7 @@ from app.llm.script_writer import Script
 from app.topics import Topic
 from app.video import tts
 from app.video.base import RenderResult
+from app.video.duration_budget import select_slides_within_budget
 
 log = logging.getLogger(__name__)
 
@@ -110,38 +122,70 @@ class LocalProvider:
         work_dir = settings.artifacts_path / f"_work_{job_id}"
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        segment_paths: list[Path] = []
         try:
+            # Synthesize every slide's narration first (cheap) so which
+            # slides fit LOCAL_MAX_DURATION_SECONDS is decided before doing
+            # any image rendering or ffmpeg work -- a slide is only ever
+            # dropped whole, never cut mid-sentence.
+            audio_paths: list[Path] = []
+            durations: list[float] = []
             for i, slide in enumerate(script.slides):
-                image_path = work_dir / f"slide_{i}.png"
                 audio_path = work_dir / f"audio_{i}.mp3"
-                segment_path = work_dir / f"segment_{i}.mp4"
-
-                _draw_slide(slide.heading, slide.bullets, topic.accent, image_path)
                 tts.synthesize(slide.narration, audio_path)
-                _mux_segment(image_path, audio_path, segment_path)
+                audio_paths.append(audio_path)
+                durations.append(self._probe_duration(audio_path))
+
+            keep_count = select_slides_within_budget(durations, settings.local_max_duration_seconds)
+            kept_slides = script.slides[:keep_count]
+
+            segment_paths: list[Path] = []
+            for i, slide in enumerate(kept_slides):
+                image_path = work_dir / f"slide_{i}.png"
+                segment_path = work_dir / f"segment_{i}.mp4"
+                _draw_slide(slide.heading, slide.bullets, topic.accent, image_path)
+                _mux_segment(image_path, audio_paths[i], segment_path)
                 segment_paths.append(segment_path)
 
+            concat_path = work_dir / "concat.mp4"
+            if len(segment_paths) == 1:
+                shutil.copy(segment_paths[0], concat_path)
+            else:
+                _concat_segments(segment_paths, concat_path, work_dir)
+
             final_path = settings.artifacts_path / f"{topic.id}_{uuid.uuid4().hex[:8]}.mp4"
-            self._concat_relative(segment_paths, final_path, work_dir)
+            self._enforce_max_duration(concat_path, final_path)
 
             size_bytes = final_path.stat().st_size
             duration = self._probe_duration(final_path)
+            # Deliberately not script.narration_text: reflects exactly the
+            # kept slides, so the mechanical content-accuracy check that
+            # runs on this file (app/qc/validator.py) validates what this
+            # file actually says, same reasoning as the Veo provider.
+            kept_narration_text = " ".join(s.narration for s in kept_slides)
             return RenderResult(
                 path=final_path,
                 duration_seconds=duration,
                 size_bytes=size_bytes,
                 provider=self.name,
-                narration_text=script.narration_text,
+                narration_text=kept_narration_text,
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
     @staticmethod
-    def _concat_relative(segment_paths: list[Path], final_path: Path, work_dir: Path) -> None:
-        tmp_out = work_dir / "combined.mp4"
-        _concat_segments(segment_paths, tmp_out, work_dir)
-        shutil.move(str(tmp_out), str(final_path))
+    def _enforce_max_duration(concat_path: Path, final_path: Path) -> None:
+        duration = LocalProvider._probe_duration(concat_path)
+        if duration > settings.local_max_duration_seconds:
+            # Last-resort safety net -- only reachable if a single kept
+            # slide's own narration alone exceeds the budget, since
+            # select_slides_within_budget already stopped adding further
+            # slides once the running total would exceed it.
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(concat_path), "-t", str(settings.local_max_duration_seconds), "-c", "copy", str(final_path)],
+                capture_output=True, timeout=120, check=True,
+            )
+        else:
+            shutil.move(str(concat_path), str(final_path))
 
     @staticmethod
     def _probe_duration(path: Path) -> float:

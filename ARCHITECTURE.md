@@ -105,11 +105,26 @@ confirmation, not verification).
 
 ## The verification layer (`app/judge/`)
 
-See README.md's "The verification layer" section for the full 7-step
+See README.md's "The verification layer" section for the full 8-step
 pipeline (claim extraction → deterministic pre-check → grounding judge →
-teaching-quality judge → mechanical QC → output-review judge → gate
-aggregation) and the documented known limitations. Architecturally, the
-points worth calling out:
+teaching-quality judge → mechanical QC → output-review judge → visual
+review judge → gate aggregation) and the documented known limitations.
+Architecturally, the points worth calling out:
+
+- **Only one judge looks at pixels**: every check up through output-review
+  operates on the SCRIPT text or mechanical facts about the file -- none of
+  them can see a generative video model (Veo) hallucinating a wrong diagram
+  or garbled on-screen text, because none of them ever decode a frame.
+  `app/judge/visual_review.py` is the exception: `app/video/frames.py`
+  extracts a handful of evenly-spaced JPEGs (ffmpeg, free) from each
+  delivered video, and they're sent as image content parts in the same
+  `judge_structured()` call every other judge uses
+  (`app/llm/openai_judge_client.py::judge_structured` accepts either plain
+  text or a list of OpenAI content parts -- the Chat Completions API takes
+  either shape unchanged, so no separate vision-specific client was needed).
+  Its verdict folds into `output_checks["visual_review"]` for the gate
+  decision, and into each variant's own row in `video_scores` for the
+  scorecard.
 
 - **One OpenAI wrapper module**: `app/llm/openai_judge_client.py` is the only
   place that calls OpenAI directly, with retry, timeout, and token
@@ -185,6 +200,19 @@ narration chunk, since one Veo call can't natively extend a clip. Doing
 that properly would need Veo's video-extension API, which is out of scope
 here; splitting into multiple segments is what keeps this app's known
 limitation bounded rather than fixing the underlying constraint.
+
+**The local video is capped the same way, for the same reason.** The main
+script (`app/llm/script_writer.py::generate_script`) is now word-budgeted to
+fit `LOCAL_MAX_DURATION_SECONDS` (30s) from the moment it's written, and
+`LocalProvider` applies the identical `select_slides_within_budget` safety
+net (in `app/video/duration_budget.py`, shared by both providers) before
+drawing a single slide image -- a slide is dropped whole or not at all,
+never mid-sentence, and `RenderResult.narration_text` reflects only the
+kept slides so the local video's own mechanical QC validates what that file
+actually says. In practice this safety net should rarely trigger, since the
+script is already sized to fit; it exists for the same reason Veo's does --
+sizing the input correctly is the primary mechanism, the selection logic is
+the backstop, not the other way around.
 
 Both renders, their metrics (duration, size, cost), and their own mechanical
 QC results are persisted on the same job row

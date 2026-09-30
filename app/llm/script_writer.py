@@ -27,6 +27,8 @@ from app.topics import Slide, Topic
 
 log = logging.getLogger(__name__)
 
+_WORDS_PER_SECOND = 2.3  # conservative spoken-word rate, leaves buffer for TTS timing variance
+
 
 class GeneratedSlide(BaseModel):
     heading: str = Field(description="Short slide title, 2-6 words")
@@ -52,11 +54,11 @@ class Script:
         return " ".join(s.narration for s in self.slides)
 
 
-_PROMPT_TEMPLATE = """You are a chemistry teacher writing a short (30-60 second) educational \
-video script for the question: "{question}"
+_PROMPT_TEMPLATE = """You are a chemistry teacher writing a short (under {target_seconds} seconds) \
+educational video script for the question: "{question}"
 
 Write {min_slides} to {max_slides} slides. Each slide needs a short heading, 2-3 short bullet \
-points, and 1-3 sentences of spoken narration that a text-to-speech engine will read aloud.
+points, and 1-2 short sentences of spoken narration that a text-to-speech engine will read aloud.
 
 You MUST base every factual statement ONLY on the source material below -- do not add facts, \
 numbers, or claims that are not stated in it. If the source material doesn't cover something, \
@@ -67,6 +69,9 @@ Source material (id: text):
 
 Requirements:
 - Be scientifically accurate to the source material above, and age-appropriate for audience age {audience_age}.
+- The TOTAL narration across ALL slides, combined, must be at most {max_words} words -- it will be \
+spoken aloud in under {target_seconds} seconds, so be concise: cover the core idea well rather than \
+everything possible.
 - The narration across all slides, combined, MUST naturally use these terms at least once each: \
 {must_mention}.
 - Keep narration conversational and clear -- it will be spoken aloud, not read.
@@ -84,11 +89,14 @@ def _format_source_material(chunks: tuple[Chunk, ...]) -> str:
     return "\n".join(f"[{c.id}] {c.text}" for c in chunks)
 
 
-def _validate(script: GeneratedScript, topic: Topic) -> str | None:
+def _validate(script: GeneratedScript, topic: Topic, max_words: int) -> str | None:
     if not (2 <= len(script.slides) <= 4):
         return f"expected 2-4 slides, got {len(script.slides)}"
-    narration = " ".join(s.narration for s in script.slides).lower()
-    missing = [term for term in topic.must_mention if term.lower() not in narration]
+    narration = " ".join(s.narration for s in script.slides)
+    word_count = len(narration.split())
+    if word_count > max_words:
+        return f"narration is {word_count} words, over the {max_words}-word budget"
+    missing = [term for term in topic.must_mention if term.lower() not in narration.lower()]
     if missing:
         return f"narration is missing required terms: {missing}"
     for slide in script.slides:
@@ -115,9 +123,15 @@ def generate_script(topic: Topic, *, audience_age: int = 15, correction_issues: 
     grounding/teaching-quality gate back in as explicit correction context
     for a regeneration attempt (BUILD_SPEC Part 3, "regenerate... feeding the
     failed claims back as explicit correction context").
+
+    Word-budgeted to fit LOCAL_MAX_DURATION_SECONDS from the moment it's
+    written -- not written long and trimmed after rendering. See
+    app/video/local_provider.py, which still applies a whole-slide-selection
+    safety net on top of this, same reasoning as the Veo highlight script.
     """
     chunks = tuple(all_chunks_for_topic(topic.id))
     chunk_ids = tuple(c.id for c in chunks)
+    max_words = max(int(settings.local_max_duration_seconds * _WORDS_PER_SECOND), 20)
 
     try:
         chat = get_chat_model()
@@ -133,6 +147,8 @@ def generate_script(topic: Topic, *, audience_age: int = 15, correction_issues: 
         max_slides=4,
         source_material=_format_source_material(chunks),
         audience_age=audience_age,
+        max_words=max_words,
+        target_seconds=settings.local_max_duration_seconds,
         must_mention=", ".join(topic.must_mention),
         correction_block=correction_block,
     )
@@ -140,7 +156,7 @@ def generate_script(topic: Topic, *, audience_age: int = 15, correction_issues: 
     for attempt in range(1, settings.max_script_attempts + 1):
         try:
             result: GeneratedScript = structured_chat.invoke(prompt)  # type: ignore[assignment]
-            error = _validate(result, topic)
+            error = _validate(result, topic, max_words)
             if error is None:
                 slides = tuple(
                     Slide(heading=s.heading, bullets=tuple(s.bullets), narration=s.narration)
@@ -168,7 +184,6 @@ def generate_script(topic: Topic, *, audience_age: int = 15, correction_issues: 
 # for why: a video built from oversized narration and then trimmed can cut
 # audio mid-sentence and misrepresent what the file actually says.
 # ---------------------------------------------------------------------------
-_WORDS_PER_SECOND = 2.3  # conservative spoken-word rate, leaves buffer for TTS timing variance
 
 _HIGHLIGHT_PROMPT_TEMPLATE = """You are writing a VERY SHORT highlight narration -- a {target_seconds}-second \
 teaser, NOT the full lesson -- for a short-form video answering: "{question}"

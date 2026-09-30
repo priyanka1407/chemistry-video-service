@@ -14,6 +14,7 @@ from enum import Enum
 from app.judge.grounding import GroundingReport
 from app.judge.output_review import OutputReviewReport
 from app.judge.teaching_quality import TeachingQualityReport
+from app.judge.visual_review import VisualReviewReport
 
 
 class GateDecision(str, Enum):
@@ -100,11 +101,23 @@ def build_quality_report(
     review_hold_margin: float,
     veo_grounding: GroundingReport | None = None,
     veo_qc_details: dict | None = None,
+    local_visual_review: VisualReviewReport | None = None,
+    veo_visual_review: VisualReviewReport | None = None,
 ) -> QualityReport:
     output_checks = _output_checks_from_qc(qc_details)
     if output_review is not None:
         output_checks["llm_output_review"] = (
             "SKIP" if output_review.skipped else ("PASS" if output_review.passed else "FAIL")
+        )
+    if local_visual_review is not None:
+        output_checks["visual_review"] = (
+            "SKIP" if local_visual_review.skipped else ("PASS" if local_visual_review.passed else "FAIL")
+        )
+
+    veo_output_checks = _output_checks_from_qc(veo_qc_details)
+    if veo_visual_review is not None:
+        veo_output_checks["visual_review"] = (
+            "SKIP" if veo_visual_review.skipped else ("PASS" if veo_visual_review.passed else "FAIL")
         )
 
     contradicted = [
@@ -132,7 +145,7 @@ def build_quality_report(
     if veo_grounding is not None:
         video_scores["veo"] = _video_score(
             faithfulness=veo_grounding.faithfulness_score,
-            qc_checks=_output_checks_from_qc(veo_qc_details),
+            qc_checks=veo_output_checks,
             teaching_aggregate=None,
         )
 

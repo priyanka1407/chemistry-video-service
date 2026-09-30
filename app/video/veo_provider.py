@@ -54,33 +54,13 @@ from app.llm.script_writer import Script
 from app.topics import Slide, Topic
 from app.video import tts
 from app.video.base import RenderResult
+from app.video.duration_budget import select_slides_within_budget
 
 log = logging.getLogger(__name__)
 
 
 class VeoGenerationError(RuntimeError):
     pass
-
-
-def select_slides_within_budget(durations: list[float], max_duration: float) -> int:
-    """How many leading slides (in order) fit within `max_duration`, given
-    each candidate slide's own narration duration. Always keeps at least
-    one slide, even if it alone exceeds the budget (a single over-long
-    slide is a rare edge case handled by _enforce_duration_bounds's
-    last-resort trim, not by dropping every slide and delivering nothing).
-    Pure function, independent of ffmpeg/TTS/Veo, so the actual selection
-    decision is unit-testable on its own -- see tests/test_veo_provider.py.
-    """
-    if not durations:
-        return 0
-    total = durations[0]
-    count = 1
-    for d in durations[1:]:
-        if total + d > max_duration:
-            break
-        total += d
-        count += 1
-    return count
 
 
 class VeoProvider:

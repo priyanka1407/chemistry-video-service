@@ -74,6 +74,8 @@ def test_quality_report_is_available_after_generation():
         assert body["gate_decision"] == "DELIVER"
         assert body["faithfulness_score"] == 1.0
         assert body["output_checks"]
+        assert body["output_checks"]["visual_review"] == "PASS"
+        assert body["video_scores"]["veo"]["qc_checks"]["visual_review"] == "PASS"
 
         assert set(body["video_scores"]) == {"local", "veo"}
         for row in body["video_scores"].values():

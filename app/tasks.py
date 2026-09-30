@@ -19,6 +19,7 @@ task itself exhausted its retries -- see the dead_letter_jobs table).
 from __future__ import annotations
 
 import logging
+import shutil
 
 from app import costs
 from app.celery_app import celery_app
@@ -30,6 +31,7 @@ from app.judge.grounding import GroundingReport, PreCheckResult, run_grounding_c
 from app.judge.output_review import run_output_review
 from app.judge.report import GateDecision, build_quality_report
 from app.judge.teaching_quality import run_teaching_quality_check
+from app.judge.visual_review import VisualReviewReport, run_visual_review
 from app.llm.openai_judge_client import JudgeUnavailable
 from app.llm.script_writer import Script, generate_highlight_script, generate_script
 from app.qc.validator import validate as qc_validate
@@ -37,6 +39,7 @@ from app.rag.store import all_chunks_for_topic
 from app.schemas import JobStatus
 from app.topics import Topic, get_topic
 from app.video import factory as video_factory
+from app.video.frames import extract_sample_frames
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +148,35 @@ def _generate_and_verify_highlight(topic: Topic, audience_age: int, fallback_scr
         grounding = _extract_and_ground(highlight_script.narration_text, topic.id)
 
     return highlight_script, grounding
+
+
+def _run_visual_reviews(topic: Topic, job_id: str, local_result, veo_result) -> tuple[VisualReviewReport | None, VisualReviewReport | None]:
+    """Sample frames from each rendered video and run the vision judge on
+    them -- the only check that looks at actual pixels rather than script
+    text, so it's the only thing that can catch a generative video model
+    hallucinating wrong visuals or garbled on-screen text. No-ops (returns
+    None, None) if ENABLE_VISUAL_REVIEW is off; frame extraction failing
+    (e.g. a corrupt render) is treated as a skip, not a task-crashing error,
+    same "no check may be skipped silently" discipline as every other judge."""
+    if not settings.enable_visual_review:
+        return None, None
+
+    frame_dir = settings.artifacts_path / f"_frames_{job_id}"
+    try:
+        local_visual = _visual_review_for(topic, local_result, frame_dir / "local")
+        veo_visual = _visual_review_for(topic, veo_result, frame_dir / "veo") if veo_result is not None else None
+        return local_visual, veo_visual
+    finally:
+        shutil.rmtree(frame_dir, ignore_errors=True)
+
+
+def _visual_review_for(topic: Topic, render_result, frame_dir) -> VisualReviewReport:
+    try:
+        frames = extract_sample_frames(render_result.path, settings.visual_review_frame_count, frame_dir)
+    except Exception as exc:  # noqa: BLE001 - a broken extraction shouldn't crash the whole job
+        log.exception("Frame extraction failed for %s -- SKIPPING the visual review check.", render_result.path)
+        return VisualReviewReport(passed=False, concerns=[], justification="", skipped=True, skip_reason=str(exc))
+    return run_visual_review(question=topic.question, narration_text=render_result.narration_text, frame_paths=frames)
 
 
 @celery_app.task(bind=True, max_retries=settings.max_task_retries, name="app.tasks.generate_topic_video_task")
@@ -264,6 +296,8 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
         qc_facts={"local": local_qc.details, "veo": veo_qc.details if veo_qc else None},
     )
 
+    local_visual, veo_visual = _run_visual_reviews(topic, job.id, local_result, veo_result)
+
     final_report = build_quality_report(
         grounding=grounding, teaching=teaching, output_review=output_review, qc_details=local_qc.details,
         threshold_faithfulness=settings.faithfulness_threshold,
@@ -271,6 +305,8 @@ def _run_pipeline(db, job, topic: Topic, audience_age: int) -> str:
         review_hold_margin=settings.review_hold_margin,
         veo_grounding=highlight_grounding if veo_result is not None else None,
         veo_qc_details=veo_qc.details if veo_qc else None,
+        local_visual_review=local_visual,
+        veo_visual_review=veo_visual,
     )
 
     delivered = local_result if settings.default_video_delivery_provider != "veo" or veo_result is None else veo_result

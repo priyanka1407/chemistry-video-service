@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     openai_judge_timeout_seconds: int = 60
     openai_judge_max_retries: int = 3
 
+    # Post-render visual spot-check: the only judge that looks at actual
+    # rendered frames rather than script text -- catches a generative video
+    # model (Veo) hallucinating wrong visuals or garbled on-screen text,
+    # which no text-only check can see. See app/judge/visual_review.py.
+    enable_visual_review: bool = True
+    visual_review_frame_count: int = 5
+    visual_review_detail: str = "low"  # "low" | "high" -- low is enough for a coherence spot-check (see README cost notes)
+
     # --- Video provider --------------------------------------------------
     video_provider: str = "local"  # local | veo -- which provider a single-provider run uses
     enable_dual_video_generation: bool = True  # render local AND veo; both stored + gated in the DB
@@ -68,6 +76,11 @@ class Settings(BaseSettings):
     video_height: int = 720
     video_fps: int = 24
     artifacts_dir: str = "./artifacts"
+    # The local/gTTS video is capped the same way Veo is: whole slides are
+    # selected to fit this budget (never a mid-sentence cut), and the main
+    # script itself is now word-budgeted to target this duration from
+    # generation time rather than being written long and trimmed after.
+    local_max_duration_seconds: int = 30
 
     # --- Reliability -------------------------------------------------------
     max_script_attempts: int = 3

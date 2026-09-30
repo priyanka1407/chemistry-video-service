@@ -1,15 +1,41 @@
-"""Unit tests for the Veo highlight script's word-budget validation and
-curated fallback (app/llm/script_writer.py) -- the part that guarantees a
-Veo script is sized to fit its duration cap from the moment it's written,
-never generated full-length and trimmed after the fact."""
+"""Unit tests for the main script's and the Veo highlight script's
+word-budget validation and curated fallbacks (app/llm/script_writer.py) --
+the part that guarantees BOTH scripts are sized to fit their respective
+duration caps from the moment they're written, never generated full-length
+and trimmed after the fact."""
 from __future__ import annotations
 
-from app.llm.script_writer import GeneratedScript, GeneratedSlide, _validate_highlight, generate_highlight_script
+from app.llm.script_writer import (
+    GeneratedScript,
+    GeneratedSlide,
+    _validate,
+    _validate_highlight,
+    generate_highlight_script,
+)
 from app.topics import get_topic
 
 
 def _slide(narration: str, heading: str = "Heading") -> GeneratedSlide:
     return GeneratedSlide(heading=heading, bullets=["A point"], narration=narration)
+
+
+def test_validate_rejects_over_budget_narration():
+    topic = get_topic("ph_scale")
+    script = GeneratedScript(title="t", slides=[
+        _slide("word " * 80 + "ph acid hydrogen"), _slide("more words here today"),
+    ])
+    error = _validate(script, topic, max_words=30)
+    assert error is not None
+    assert "word" in error.lower()
+
+
+def test_validate_accepts_a_script_within_budget():
+    topic = get_topic("ph_scale")
+    script = GeneratedScript(title="t", slides=[
+        _slide("The ph scale measures acid strength using hydrogen ions."),
+        _slide("Below 7 is acidic and above 7 is basic."),
+    ])
+    assert _validate(script, topic, max_words=69) is None
 
 
 def test_validate_highlight_rejects_over_budget_narration():
