@@ -1,0 +1,72 @@
+// =============================================================================================
+// Jenkins declarative pipeline - same stages as the GitHub workflow, for banks running Jenkins.
+// Every stage runs in the pinned Playwright container -> identical browser build on every node.
+// =============================================================================================
+def PW_IMAGE = 'mcr.microsoft.com/playwright/java:v1.56.0-noble'
+
+pipeline {
+    agent none
+    parameters {
+        choice(name: 'ENV', choices: ['ci', 'uat'], description: 'Target environment')
+        choice(name: 'BROWSER', choices: ['chromium', 'firefox', 'webkit'], description: 'Browser engine')
+        string(name: 'TAGS', defaultValue: '', description: 'JUnit tags to include (empty = all), e.g. smoke')
+    }
+    options {
+        timeout(time: 45, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
+        disableConcurrentBuilds(abortPrevious: true)
+    }
+    environment {
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
+        MVN = 'mvn -B -ntp'
+    }
+    stages {
+        stage('Build + unit') {
+            agent { docker { image PW_IMAGE; args '--ipc=host' } }
+            steps {
+                dir('banking-playwright-framework') { sh '$MVN test -Dgroups=unit' }
+            }
+            post { always { junit testResults: 'banking-playwright-framework/target/surefire-reports/*.xml', allowEmptyResults: true } }
+        }
+        stage('E2E (4 shards)') {
+            // One agent/workspace per shard: no shared target/ dir, true horizontal scale on a Jenkins grid.
+            parallel {
+                stage('shard 1') { agent { docker { image PW_IMAGE; args '--ipc=host' } } steps { runShard(1) } post { always { collect() } } }
+                stage('shard 2') { agent { docker { image PW_IMAGE; args '--ipc=host' } } steps { runShard(2) } post { always { collect() } } }
+                stage('shard 3') { agent { docker { image PW_IMAGE; args '--ipc=host' } } steps { runShard(3) } post { always { collect() } } }
+                stage('shard 4') { agent { docker { image PW_IMAGE; args '--ipc=host' } } steps { runShard(4) } post { always { collect() } } }
+            }
+        }
+        stage('UAT smoke') {
+            when { expression { params.ENV == 'uat' } }
+            agent { docker { image PW_IMAGE; args '--ipc=host' } }
+            steps {
+                // Credentials plugin: values are masked in the log and exist only inside this block.
+                withCredentials([
+                    usernamePassword(credentialsId: 'nb-uat-maker', usernameVariable: 'BANK_AUTH_MAKER_USERNAME', passwordVariable: 'BANK_AUTH_MAKER_PASSWORD'),
+                    string(credentialsId: 'nb-uat-maker-totp', variable: 'BANK_AUTH_MAKER_TOTP_SECRET'),
+                    usernamePassword(credentialsId: 'nb-uat-checker', usernameVariable: 'BANK_AUTH_CHECKER_USERNAME', passwordVariable: 'BANK_AUTH_CHECKER_PASSWORD'),
+                    string(credentialsId: 'nb-uat-checker-totp', variable: 'BANK_AUTH_CHECKER_TOTP_SECRET')
+                ]) {
+                    dir('banking-playwright-framework') { sh '$MVN test -Pci -Denv=uat -Dgroups=smoke -Dbrowser=$BROWSER' }
+                }
+            }
+            post { always { collect() } }
+        }
+    }
+}
+
+def runShard(int n) {
+    dir('banking-playwright-framework') {
+        def tags = params.TAGS ? "-Dgroups=${params.TAGS}" : ''
+        sh "\$MVN test -Pci -Denv=${params.ENV} -Dbrowser=${params.BROWSER} -Dshard=${n}/4 -DexcludedGroups=unit,quarantine ${tags}"
+    }
+}
+
+def collect() {
+    // keepProperties + retries (-Pci) -> Jenkins shows "flaky" results from <flakyFailure> elements.
+    junit testResults: 'banking-playwright-framework/target/surefire-reports/*.xml', allowEmptyResults: true
+    archiveArtifacts artifacts: 'banking-playwright-framework/target/playwright-artifacts/**', allowEmptyArchive: true
+    // Cached sessions are live cookies - wipe them from the workspace.
+    sh 'rm -rf banking-playwright-framework/target/.auth || true'
+}

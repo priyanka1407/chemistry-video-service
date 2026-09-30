@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Settlements · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1>Settlement batches</h1>
+  <section class="card">
+    <p class="muted">Batches refresh automatically every 2 seconds.</p>
+    <table aria-label="Settlement batches">
+      <thead><tr><th scope="col">Batch ID</th><th scope="col">Business date</th><th scope="col">Payments</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="no-batches" class="muted" hidden>No settlement batches yet.</p>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+(async () => {
+  const me = await NB.requireSession('SETTLEMENTS_VIEW');
+  if (!me) return;
+  const canClose = me.permissions.includes('SETTLEMENTS_CLOSE');
+  const tbody = document.querySelector('tbody');
+  const render = async () => {
+    const res = await NB.api('/api/settlements');
+    document.getElementById('no-batches').hidden = res.data.length > 0;
+    res.data.forEach(b => {
+      // Keyed, in-place update (rows are not destroyed on each refresh)
+      let tr = tbody.querySelector(`tr[data-batch-id="${b.batchId}"]`);
+      if (!tr) {
+        tr = document.createElement('tr');
+        tr.dataset.batchId = b.batchId;
+        tr.innerHTML = `<td>${b.batchId}</td><td>${b.businessDate}</td><td class="count"></td><td class="total"></td><td class="status"></td>
+          <td><a href="/settlement-detail.html?id=${b.batchId}" target="_blank" rel="noopener">View details</a> ·
+              <a href="/api/settlements/${b.batchId}/report.csv" download>Download CSV</a>
+              ${canClose ? '<button type="button" class="close-batch">Close batch</button>' : ''}</td>`;
+        const btn = tr.querySelector('.close-batch');
+        if (btn) btn.onclick = async () => {
+          const r = await NB.api(`/api/settlements/${b.batchId}/close`, { method: 'POST' });
+          if (!r.ok) NB.toast(r.data.error.message); else render();
+        };
+        tbody.prepend(tr);
+      }
+      tr.querySelector('.count').textContent = b.paymentCount;
+      tr.querySelector('.total').textContent = NB.fmtMoney(b.totalAmount, 'GBP');
+      const st = tr.querySelector('.status'); st.innerHTML = ''; st.appendChild(NB.badge(b.status));
+      const btn = tr.querySelector('.close-batch');
+      if (btn) btn.disabled = b.status !== 'OPEN';
+    });
+  };
+  render();
+  setInterval(render, 2000);
+})();
+</script>
+</body>
+</html>

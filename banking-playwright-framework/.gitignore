@@ -1,0 +1,6 @@
+target/
+# Storage state files contain LIVE session cookies - never commit.
+.auth/
+*.har
+.idea/
+*.iml

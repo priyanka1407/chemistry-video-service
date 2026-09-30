@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Administration · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1>User administration</h1>
+  <section class="card">
+    <table aria-label="Users">
+      <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+(async () => {
+  const me = await NB.requireSession('ADMIN_USERS');
+  if (!me) return;
+  const res = await NB.api('/api/admin/users');
+  document.querySelector('tbody').innerHTML = res.data.map(u => `<tr><td>${u.username}</td><td>${u.displayName}</td><td>${u.role}</td></tr>`).join('');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dashboard · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1 id="welcome">Dashboard</h1>
+  <section class="card" aria-labelledby="accounts-heading">
+    <h2 id="accounts-heading">Accounts</h2>
+    <div class="grid" id="accounts" aria-busy="true"><span class="spinner" aria-label="Loading accounts"></span></div>
+  </section>
+  <section class="card" aria-labelledby="payments-heading">
+    <h2 id="payments-heading">Recent payments</h2>
+    <label for="status-filter">Filter by status</label>
+    <select id="status-filter">
+      <option value="">All statuses</option>
+      <option>PENDING_APPROVAL</option><option>PENDING_SETTLEMENT</option><option>PROCESSING</option>
+      <option>SETTLED</option><option>REJECTED</option><option>FAILED</option>
+    </select>
+    <table aria-label="Recent payments" data-testid="payments-table">
+      <thead><tr><th scope="col">Payment ID</th><th scope="col">Reference</th><th scope="col">Beneficiary</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Created by</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+  (async () => {
+    const me = await NB.requireSession('ACCOUNTS_VIEW');
+    if (!me) return;
+    document.getElementById('welcome').textContent = `Welcome, ${me.displayName}`;
+    const acc = await NB.api('/api/accounts');
+    const box = document.getElementById('accounts');
+    box.innerHTML = '';
+    acc.data.forEach(a => {
+      const c = document.createElement('article');
+      c.className = 'card'; c.setAttribute('data-testid', 'account-card'); c.setAttribute('aria-label', a.name);
+      c.innerHTML = `<h3>${a.name}</h3><p class="muted">${a.maskedNumber}</p><p data-testid="account-balance">${NB.fmtMoney(a.balance, a.currency)}</p>`;
+      box.appendChild(c);
+    });
+    box.setAttribute('aria-busy', 'false');
+    const load = async () => {
+      const status = document.getElementById('status-filter').value;
+      const res = await NB.api('/api/payments' + (status ? '?status=' + status : ''));
+      const tbody = document.querySelector('[data-testid=payments-table] tbody');
+      tbody.innerHTML = '';
+      res.data.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${p.paymentId}</td><td>${p.reference}</td><td>${p.beneficiaryName}</td><td>${NB.fmtMoney(p.amount, p.currency)}</td><td></td><td>${p.createdBy}</td>`;
+        tr.children[4].appendChild(NB.badge(p.status));
+        tbody.appendChild(tr);
+      });
+    };
+    document.getElementById('status-filter').addEventListener('change', load);
+    load();
+  })();
+</script>
+</body>
+</html>

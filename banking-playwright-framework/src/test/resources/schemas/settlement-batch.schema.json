@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Settlement batch",
+  "type": "object",
+  "required": ["batchId", "businessDate", "status", "paymentCount", "totalAmount"],
+  "properties": {
+    "batchId":      { "type": "string", "pattern": "^STL-\\d{8}-\\d{3}$" },
+    "businessDate": { "type": "string", "format": "date" },
+    "status":       { "type": "string", "enum": ["OPEN", "CLOSING", "CLOSED"] },
+    "paymentCount": { "type": "integer", "minimum": 0 },
+    "totalAmount":  { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+    "payments":     { "type": "array", "items": { "type": "object", "required": ["paymentId", "status", "amount"] } }
+  }
+}

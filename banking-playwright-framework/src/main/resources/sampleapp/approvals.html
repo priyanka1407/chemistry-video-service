@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Approvals · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1>Payments awaiting approval</h1>
+  <div id="approval-banner"></div>
+  <section class="card">
+    <button type="button" class="secondary" id="refresh">Refresh</button>
+    <table aria-label="Pending approvals">
+      <thead><tr><th scope="col">Payment ID</th><th scope="col">Reference</th><th scope="col">Beneficiary</th><th scope="col">Amount</th><th scope="col">Initiated by</th><th scope="col">Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="empty" class="muted" hidden>Nothing to approve.</p>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+(async () => {
+  const me = await NB.requireSession('PAYMENTS_APPROVE');
+  if (!me) return;
+  const banner = document.getElementById('approval-banner');
+  const load = async () => {
+    const res = await NB.api('/api/payments?status=PENDING_APPROVAL');
+    const tbody = document.querySelector('tbody');
+    tbody.innerHTML = '';
+    document.getElementById('empty').hidden = res.data.length > 0;
+    res.data.forEach(p => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${p.paymentId}</td><td>${p.reference}</td><td>${p.beneficiaryName}</td>
+        <td>${NB.fmtMoney(p.amount, p.currency)}</td><td>${p.createdBy}</td>
+        <td><button type="button">Approve</button> <button type="button" class="danger">Reject</button></td>`;
+      const [approve, reject] = tr.querySelectorAll('button');
+      const act = async (action) => {
+        banner.innerHTML = '';
+        const r = await NB.api(`/api/payments/${p.paymentId}/${action}`, { method: 'POST' });
+        if (!r.ok) {
+          banner.innerHTML = `<div class="banner error" role="alert" data-testid="approval-error">${r.data.error.message}</div>`;
+          return;
+        }
+        NB.toast(`Payment ${p.paymentId} ${action === 'approve' ? 'approved' : 'rejected'}`);
+        tr.remove();
+      };
+      approve.onclick = () => act('approve');
+      reject.onclick = () => act('reject');
+      tbody.appendChild(tr);
+    });
+  };
+  document.getElementById('refresh').onclick = load;
+  load();
+})();
+</script>
+</body>
+</html>

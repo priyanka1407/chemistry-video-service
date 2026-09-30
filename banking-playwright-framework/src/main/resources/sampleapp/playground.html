@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Locator playground · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<header class="topbar"><span class="logo">Northbridge Bank · UI patterns playground</span></header>
+<main>
+  <h1>Locator playground</h1>
+  <p class="muted">Every section reproduces a pattern that makes locators brittle in real banking UIs.</p>
+
+  <!-- 1. Dynamic / auto-generated ids and classes -->
+  <section class="card" aria-labelledby="s1">
+    <h2 id="s1">1. Dynamic IDs</h2>
+    <div id="dyn-container"></div>
+  </section>
+
+  <!-- 2. Web component with open shadow DOM -->
+  <section class="card" aria-labelledby="s2">
+    <h2 id="s2">2. Shadow DOM balance widget</h2>
+    <bank-balance-card account="Operating Account" balance="250000.00"></bank-balance-card>
+  </section>
+
+  <!-- 3. Text matching subtleties -->
+  <section class="card" aria-labelledby="s3">
+    <h2 id="s3">3. Text variations</h2>
+    <p data-testid="total-line">Total due:&nbsp;£1,234.56</p>
+    <p>Total due (overdue): £99.00</p>
+    <button type="button">Pay</button> <button type="button">Pay now</button> <button type="button">Pay later</button>
+  </section>
+
+  <!-- 4. Element appears after async work -->
+  <section class="card" aria-labelledby="s4">
+    <h2 id="s4">4. Delayed content</h2>
+    <button type="button" id="load-offers">Load offers</button>
+    <div id="offers" aria-live="polite"></div>
+  </section>
+
+  <!-- 5. Data table: act on a row identified by its content -->
+  <section class="card" aria-labelledby="s5">
+    <h2 id="s5">5. Transactions table</h2>
+    <table aria-label="Transactions">
+      <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+      <tbody>
+        <tr><td>2026-09-01</td><td>Card payment - Tesco</td><td>£54.20</td><td>Posted</td><td><button type="button">Dispute</button></td></tr>
+        <tr><td>2026-09-02</td><td>Direct debit - Brightwater Utilities</td><td>£120.00</td><td>Posted</td><td><button type="button">Dispute</button></td></tr>
+        <tr><td>2026-09-03</td><td>Card payment - Tesco Express</td><td>£8.99</td><td>Pending</td><td><button type="button" disabled>Dispute</button></td></tr>
+        <tr><td>2026-09-04</td><td>Faster payment - Northwind Traders</td><td>£2,500.00</td><td>Posted</td><td><button type="button">Dispute</button></td></tr>
+      </tbody>
+    </table>
+    <div id="dispute-status" role="status"></div>
+  </section>
+
+  <!-- 6. Enabled only after consent -->
+  <section class="card" aria-labelledby="s6">
+    <h2 id="s6">6. Consent-gated action</h2>
+    <label><input type="checkbox" id="consent" style="width:auto"> I confirm the beneficiary details are correct</label>
+    <button type="button" id="release" disabled>Release funds</button>
+    <span id="release-result"></span>
+  </section>
+
+  <!-- 7. iframe (e.g. embedded e-signature / 3DS / payment widget) -->
+  <section class="card" aria-labelledby="s7">
+    <h2 id="s7">7. Embedded iframe</h2>
+    <iframe title="E-signature widget" width="420" height="140" srcdoc='<html><body style="font-family:sans-serif"><label for=sig>Type your full name to sign</label><br><input id=sig><button type=button onclick="document.getElementById(&apos;done&apos;).textContent=&apos;Signed by &apos;+document.getElementById(&apos;sig&apos;).value">Sign</button><p id=done></p></body></html>'></iframe>
+  </section>
+
+  <!-- 8. Tooltip on hover -->
+  <section class="card" aria-labelledby="s8">
+    <h2 id="s8">8. Hover tooltip</h2>
+    <span class="tooltip" tabindex="0">What is a cut-off time? ⓘ<span role="tooltip">Payments after 15:30 UK time are processed next business day.</span></span>
+  </section>
+
+  <!-- 9. Native multi-select & radio group -->
+  <section class="card" aria-labelledby="s9">
+    <h2 id="s9">9. Multi-select and radios</h2>
+    <label for="channels">Notification channels</label>
+    <select id="channels" multiple size="4">
+      <option value="email">Email</option><option value="sms">SMS</option><option value="push">Push notification</option><option value="letter">Letter</option>
+    </select>
+    <fieldset style="border:0;padding:0;margin-top:12px"><legend><strong>Payment speed</strong></legend>
+      <label style="font-weight:400"><input type="radio" name="speed" value="fps" style="width:auto"> Faster Payments (same day)</label>
+      <label style="font-weight:400"><input type="radio" name="speed" value="bacs" style="width:auto"> BACS (3 working days)</label>
+      <label style="font-weight:400"><input type="radio" name="speed" value="chaps" style="width:auto"> CHAPS (high value)</label>
+    </fieldset>
+  </section>
+
+  <!-- 10. Non-accessible custom dropdown (div soup) -->
+  <section class="card" aria-labelledby="s10">
+    <h2 id="s10">10. Legacy div-based dropdown (no ARIA)</h2>
+    <div class="fake-select" id="branch-select">
+      <div class="fs-value">Select branch ▾</div>
+      <div class="fs-menu" hidden>
+        <div class="fs-item" data-value="LDN">London - Canary Wharf</div>
+        <div class="fs-item" data-value="MAN">Manchester - Spinningfields</div>
+        <div class="fs-item" data-value="EDI">Edinburgh - St Andrew Square</div>
+      </div>
+    </div>
+    <p>Selected branch code: <span data-testid="branch-code">none</span></p>
+  </section>
+
+  <!-- 11. List that re-renders (stale element) -->
+  <section class="card" aria-labelledby="s11">
+    <h2 id="s11">11. Re-rendering list</h2>
+    <button type="button" id="refresh-rates">Refresh rates</button>
+    <ul id="rates" aria-label="Exchange rates"></ul>
+  </section>
+</main>
+<script>
+  // 1. dynamic ids/classes regenerated on every load
+  const rnd = () => Math.random().toString(36).slice(2, 8);
+  document.getElementById('dyn-container').innerHTML =
+    `<button type="button" id="btn-${rnd()}" class="css-${rnd()}" data-testid="generate-statement">Generate statement</button>
+     <span id="stmt-${rnd()}" role="status"></span>`;
+  document.querySelector('[data-testid=generate-statement]').onclick = (e) => { e.target.nextElementSibling.textContent = 'Statement generated'; };
+
+  // 2. custom element with open shadow root
+  customElements.define('bank-balance-card', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = `<div class="inner"><span class="label">Available balance</span>
+        <strong class="amount" data-testid="shadow-balance">£${Number(this.getAttribute('balance')).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</strong>
+        <button type="button">Hide balance</button></div>`;
+      root.querySelector('button').onclick = () => { root.querySelector('.amount').textContent = '••••••'; };
+    }
+  });
+
+  // 4. delayed content
+  document.getElementById('load-offers').onclick = () => {
+    const box = document.getElementById('offers');
+    box.innerHTML = '<span class="spinner" role="progressbar" aria-label="Loading offers"></span>';
+    setTimeout(() => { box.innerHTML = '<article class="card" aria-label="Offer"><h3>0% FX fees for 3 months</h3></article>'; }, 1500);
+  };
+
+  // 5. table actions
+  document.querySelectorAll('table[aria-label=Transactions] button').forEach(b => b.onclick = () => {
+    document.getElementById('dispute-status').textContent = 'Dispute raised for ' + b.closest('tr').children[1].textContent;
+  });
+
+  // 6. consent gate
+  document.getElementById('consent').onchange = (e) => { document.getElementById('release').disabled = !e.target.checked; };
+  document.getElementById('release').onclick = () => { document.getElementById('release-result').textContent = 'Funds released'; };
+
+  // 10. div dropdown
+  const fs = document.getElementById('branch-select');
+  fs.querySelector('.fs-value').onclick = () => { fs.querySelector('.fs-menu').hidden = !fs.querySelector('.fs-menu').hidden; };
+  fs.querySelectorAll('.fs-item').forEach(i => i.onclick = () => {
+    fs.querySelector('.fs-value').textContent = i.textContent + ' ▾';
+    fs.querySelector('.fs-menu').hidden = true;
+    document.querySelector('[data-testid=branch-code]').textContent = i.dataset.value;
+  });
+
+  // 11. list destroyed and rebuilt on refresh
+  let version = 0;
+  const renderRates = () => {
+    version++;
+    document.getElementById('rates').innerHTML =
+      ['EUR', 'USD', 'JPY'].map(c => `<li data-version="${version}">GBP/${c} v${version}</li>`).join('');
+  };
+  renderRates();
+  document.getElementById('refresh-rates').onclick = () => setTimeout(renderRates, 300);
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>3-D Secure</title><link rel="stylesheet" href="/app.css"></head>
+<body style="background:#fff">
+  <div style="padding:16px">
+    <h2>Verify your purchase</h2>
+    <p class="muted">We sent a one-time passcode to your registered mobile.</p>
+    <form id="acs-form">
+      <label for="acs-otp">One-time passcode</label>
+      <input id="acs-otp" name="otp" inputmode="numeric" maxlength="6">
+      <p><button type="submit">Verify</button></p>
+    </form>
+  </div>
+<script>
+  const authId = new URLSearchParams(location.search).get('authId');
+  document.getElementById('acs-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const res = await fetch('/api/cards/3ds/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authId, otp: document.getElementById('acs-otp').value }) });
+    const result = await res.json();
+    parent.postMessage({ type: '3ds-complete', result }, location.origin);
+  });
+</script>
+</body>
+</html>

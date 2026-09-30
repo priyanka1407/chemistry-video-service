@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sign in · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<header class="topbar"><span class="logo">Northbridge Bank · Corporate</span></header>
+<main>
+  <section class="card" style="max-width:480px;margin:40px auto;">
+    <h1>Sign in to Corporate Banking</h1>
+    <div id="reason-banner"></div>
+    <form id="credentials-form" novalidate>
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <div id="login-error" role="alert" class="field-error"></div>
+      <p><button type="submit" id="continue-btn">Continue</button></p>
+    </form>
+    <form id="mfa-form" hidden novalidate>
+      <h2>Two-step verification</h2>
+      <p class="muted">Enter the 6-digit code from your authenticator app.</p>
+      <label for="otp">Verification code</label>
+      <input id="otp" name="otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456">
+      <div id="otp-error" role="alert" class="field-error"></div>
+      <p><button type="submit">Verify and sign in</button></p>
+    </form>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+  const reason = new URLSearchParams(location.search).get('reason');
+  const messages = {
+    timeout: ['info', 'You were signed out due to inactivity.'],
+    SESSION_EXPIRED: ['info', 'Your session has expired. Please sign in again.'],
+    signedout: ['success', 'You have signed out securely.'],
+  };
+  if (messages[reason]) {
+    document.getElementById('reason-banner').innerHTML =
+      `<div class="banner ${messages[reason][0]}" role="status">${messages[reason][1]}</div>`;
+  }
+  const cred = document.getElementById('credentials-form');
+  const mfa = document.getElementById('mfa-form');
+  let creds = null;
+  cred.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    creds = { username: cred.username.value.trim(), password: cred.password.value };
+    const err = document.getElementById('login-error');
+    err.textContent = '';
+    if (!creds.username || !creds.password) { err.textContent = 'Enter your username and password'; return; }
+    const res = await NB.api('/api/auth/login', { method: 'POST', body: creds });
+    if (!res.ok) { err.textContent = res.data.error.message; return; }
+    cred.hidden = true; mfa.hidden = false; document.getElementById('otp').focus();
+  });
+  mfa.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const res = await NB.api('/api/auth/login', { method: 'POST', body: { ...creds, otp: mfa.otp.value.trim() } });
+    if (!res.ok) { document.getElementById('otp-error').textContent = res.data.error.message; return; }
+    location.href = '/dashboard.html';
+  });
+</script>
+</body>
+</html>

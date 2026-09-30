@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Card authorization · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1>Card authorization simulator</h1>
+  <section class="card">
+    <form id="card-form" novalidate>
+      <label for="pan">Card number</label>
+      <input id="pan" name="pan" inputmode="numeric" autocomplete="off" placeholder="4000 0000 0000 0000">
+      <div id="pan-error" class="field-error" role="alert"></div>
+      <div class="grid">
+        <div><label for="expiry">Expiry (MM/YY)</label><input id="expiry" name="expiry" placeholder="MM/YY"><div id="expiry-error" class="field-error" role="alert"></div></div>
+        <div><label for="cvv">CVV</label><input id="cvv" name="cvv" type="password" maxlength="4" autocomplete="off"><div id="cvv-error" class="field-error" role="alert"></div></div>
+      </div>
+      <label for="card-amount">Amount (GBP)</label>
+      <input id="card-amount" name="amount" inputmode="decimal">
+      <div id="amount-error" class="field-error" role="alert"></div>
+      <label for="mcc">Merchant category</label>
+      <select id="mcc" name="mcc">
+        <option value="5411">5411 - Grocery stores</option>
+        <option value="5812">5812 - Restaurants</option>
+        <option value="4511">4511 - Airlines</option>
+        <option value="7995">7995 - Gambling</option>
+      </select>
+      <label for="merchant">Merchant name</label>
+      <input id="merchant" name="merchant" value="Test Merchant Ltd">
+      <p><button type="submit">Authorize</button></p>
+    </form>
+  </section>
+  <section class="card" id="auth-result" hidden aria-live="polite">
+    <h2>Authorization result</h2>
+    <p>Decision: <span id="decision"></span></p>
+    <p>Response code: <strong data-testid="response-code"></strong> - <span data-testid="response-message"></span></p>
+    <p>Card: <span data-testid="masked-pan"></span></p>
+    <div id="challenge-container"></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+(async () => {
+  const me = await NB.requireSession('CARDS_AUTHORIZE');
+  if (!me) return;
+  const form = document.getElementById('card-form');
+  const show = (a) => {
+    document.getElementById('auth-result').hidden = false;
+    const d = document.getElementById('decision'); d.innerHTML = ''; d.appendChild(NB.badge(a.decision));
+    document.querySelector('[data-testid=response-code]').textContent = a.responseCode;
+    document.querySelector('[data-testid=response-message]').textContent = a.message;
+    document.querySelector('[data-testid=masked-pan]').textContent = a.maskedPan;
+  };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    document.getElementById('challenge-container').innerHTML = '';
+    const body = { pan: form.pan.value.replaceAll(' ', ''), expiry: form.expiry.value.trim(), cvv: form.cvv.value,
+                   amount: form.amount.value.trim(), currency: 'GBP', mcc: form.mcc.value, merchant: form.merchant.value };
+    const res = await NB.api('/api/cards/authorize', { method: 'POST', body });
+    if (res.status === 422) { NB.showFieldErrors(form, res.data.error.fields); return; }
+    NB.showFieldErrors(form, []);
+    show(res.data);
+    if (res.data.decision === 'CHALLENGE') {
+      // 3-D Secure challenge rendered by the "issuer ACS" inside an iframe
+      document.getElementById('challenge-container').innerHTML =
+        `<iframe title="3-D Secure challenge" name="acs-frame" src="/3ds-challenge.html?authId=${res.data.authId}" width="420" height="260"></iframe>`;
+    }
+  });
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== '3ds-complete') return;
+    document.getElementById('challenge-container').innerHTML = '';
+    show(e.data.result);
+  });
+})();
+</script>
+</body>
+</html>

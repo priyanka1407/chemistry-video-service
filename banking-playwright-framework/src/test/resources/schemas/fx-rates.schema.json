@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FX rates (third-party provider)",
+  "type": "object",
+  "required": ["provider", "base", "timestamp", "rates"],
+  "properties": {
+    "provider":  { "type": "string", "examples": ["MockFX"] },
+    "base":      { "type": "string", "const": "GBP" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "rates": {
+      "type": "object",
+      "required": ["GBP", "EUR", "USD"],
+      "properties": {
+        "GBP": { "type": "number", "const": 1.0 },
+        "EUR": { "type": "number", "exclusiveMinimum": 0, "minimum": 0.5, "maximum": 2.0 },
+        "USD": { "type": "number", "exclusiveMinimum": 0, "minimum": 0.5, "maximum": 2.5 }
+      }
+    }
+  }
+}

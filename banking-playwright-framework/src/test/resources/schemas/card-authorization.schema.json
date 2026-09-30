@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Card authorization response",
+  "type": "object",
+  "required": ["authId", "maskedPan", "amount", "currency", "decision", "responseCode", "message", "createdAt"],
+  "properties": {
+    "authId":       { "type": "string", "pattern": "^AUTH-[A-Z0-9]{10}$" },
+    "maskedPan":    { "type": "string", "pattern": "^\\d{6}\\*{3,9}\\d{4}$", "description": "PCI-DSS: first 6 + last 4 only" },
+    "amount":       { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+    "currency":     { "type": "string", "enum": ["GBP"] },
+    "decision":     { "type": "string", "enum": ["APPROVED", "DECLINED", "CHALLENGE"] },
+    "responseCode": { "type": "string", "pattern": "^[0-9A-Z]{2}$" },
+    "message":      { "type": "string" },
+    "createdAt":    { "type": "string", "format": "date-time" }
+  },
+  "not": { "anyOf": [ { "required": ["pan"] }, { "required": ["cvv"] } ] }
+}

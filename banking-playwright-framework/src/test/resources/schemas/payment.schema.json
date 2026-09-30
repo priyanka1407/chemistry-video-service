@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Payment",
+  "type": "object",
+  "required": ["paymentId", "reference", "debtorAccountId", "beneficiaryId", "beneficiaryName", "amount", "currency",
+               "executionDate", "status", "createdBy", "createdAt", "updatedAt", "statusHistory"],
+  "additionalProperties": false,
+  "properties": {
+    "paymentId":       { "type": "string", "pattern": "^PAY-[A-Z0-9]{8}$", "x-mock": "id:PAY-" },
+    "reference":       { "type": "string", "minLength": 1, "maxLength": 18, "x-mock": "reference" },
+    "debtorAccountId": { "type": "string", "pattern": "^ACC-\\d{3}$", "examples": ["ACC-001"] },
+    "beneficiaryId":   { "type": "string", "pattern": "^BEN-\\d{3}$", "examples": ["BEN-100"] },
+    "beneficiaryName": { "type": "string", "minLength": 1, "x-mock": "company" },
+    "amount":          { "type": "string", "pattern": "^\\d{1,9}\\.\\d{2}$", "x-mock": "amount",
+                         "description": "Decimal as STRING - money is never a binary float on the wire" },
+    "currency":        { "type": "string", "enum": ["GBP", "EUR", "USD"] },
+    "executionDate":   { "type": "string", "format": "date" },
+    "status":          { "$ref": "#/$defs/status" },
+    "createdBy":       { "type": "string", "examples": ["maker.user"] },
+    "approvedBy":      { "type": ["string", "null"], "default": null },
+    "createdAt":       { "type": "string", "format": "date-time" },
+    "updatedAt":       { "type": "string", "format": "date-time" },
+    "settlementBatchId": { "type": ["string", "null"], "pattern": "^STL-\\d{8}-\\d{3}$", "default": null },
+    "statusHistory": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["status", "at", "by"],
+        "properties": {
+          "status": { "$ref": "#/$defs/status" },
+          "at": { "type": "string", "format": "date-time" },
+          "by": { "type": "string", "examples": ["maker.user"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "status": { "type": "string", "enum": ["PENDING_APPROVAL", "REJECTED", "PENDING_SETTLEMENT", "PROCESSING", "SETTLED", "FAILED"] }
+  }
+}

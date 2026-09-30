@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Settlement detail · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1 id="batch-title">Settlement batch</h1>
+  <section class="card">
+    <p>Status: <span id="batch-status"></span></p>
+    <p data-testid="reconciliation"></p>
+    <table aria-label="Settled payments">
+      <thead><tr><th scope="col">Payment ID</th><th scope="col">Reference</th><th scope="col">Beneficiary</th><th scope="col">Amount</th><th scope="col">Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+(async () => {
+  const me = await NB.requireSession('SETTLEMENTS_VIEW');
+  if (!me) return;
+  const id = new URLSearchParams(location.search).get('id');
+  const res = await NB.api('/api/settlements/' + id);
+  if (!res.ok) { document.getElementById('batch-title').textContent = 'Batch not found'; return; }
+  const b = res.data;
+  document.title = `${b.batchId} · Northbridge Bank`;
+  document.getElementById('batch-title').textContent = `Settlement batch ${b.batchId}`;
+  document.getElementById('batch-status').appendChild(NB.badge(b.status));
+  document.querySelector('[data-testid=reconciliation]').textContent =
+    `Total ${NB.fmtMoney(b.totalAmount, 'GBP')} across ${b.paymentCount} payments`;
+  const tbody = document.querySelector('tbody');
+  b.payments.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.paymentId}</td><td>${p.reference}</td><td>${p.beneficiaryName}</td><td>${NB.fmtMoney(p.amount, p.currency)}</td><td></td>`;
+    tr.children[4].appendChild(NB.badge(p.status));
+    tbody.appendChild(tr);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>New payment · Northbridge Bank</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<main>
+  <h1>New payment</h1>
+  <section class="card">
+    <form id="payment-form" novalidate aria-labelledby="form-title">
+      <h2 id="form-title">Payment details</h2>
+
+      <!-- Native <select> whose <option>s are loaded asynchronously -->
+      <label for="debtorAccountId">Pay from</label>
+      <select id="debtorAccountId" name="debtorAccountId" aria-describedby="debtorAccountId-error">
+        <option value="">Loading accounts…</option>
+      </select>
+      <div id="debtorAccountId-error" class="field-error" role="alert"></div>
+
+      <!-- ARIA 1.2 combobox with async, debounced search results (the "dynamic dropdown") -->
+      <label for="beneficiary-search" id="beneficiary-label">Beneficiary</label>
+      <div class="combobox">
+        <input id="beneficiary-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+               aria-controls="beneficiary-listbox" autocomplete="off" placeholder="Search by name or IBAN"
+               aria-describedby="beneficiaryId-error">
+        <ul id="beneficiary-listbox" role="listbox" aria-label="Beneficiary suggestions" hidden></ul>
+      </div>
+      <input type="hidden" name="beneficiaryId" id="beneficiaryId">
+      <div id="selected-beneficiary" class="muted" data-testid="selected-beneficiary"></div>
+      <div id="beneficiaryId-error" class="field-error" role="alert"></div>
+
+      <label for="currency">Currency</label>
+      <select id="currency" name="currency">
+        <option value="GBP" selected>GBP - Pound sterling</option>
+        <option value="EUR">EUR - Euro</option>
+        <option value="USD">USD - US dollar</option>
+      </select>
+      <div id="fx-quote" aria-live="polite" data-testid="fx-quote"></div>
+
+      <label for="amount">Amount</label>
+      <input id="amount" name="amount" inputmode="decimal" placeholder="0.00" aria-describedby="amount-hint amount-error">
+      <div id="amount-hint" class="muted">Between 0.01 and 50,000.00. Payments over 10,000.00 need checker approval.</div>
+      <div id="amount-error" class="field-error" role="alert"></div>
+
+      <label for="reference">Payment reference</label>
+      <input id="reference" name="reference" maxlength="40" aria-describedby="reference-error">
+      <div id="reference-error" class="field-error" role="alert"></div>
+
+      <label for="executionDate">Payment date</label>
+      <input id="executionDate" name="executionDate" type="date" aria-describedby="executionDate-error">
+      <div id="executionDate-error" class="field-error" role="alert"></div>
+
+      <p><button type="submit">Review payment</button></p>
+    </form>
+  </section>
+  <section class="card" id="result" hidden aria-live="polite">
+    <h2>Payment submitted</h2>
+    <p>Payment ID: <strong data-testid="payment-id"></strong></p>
+    <p>Status: <span id="result-status"></span></p>
+    <p id="approval-note" class="banner info" hidden>This payment exceeds 10,000.00 and requires approval by a checker.</p>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+(async () => {
+  const me = await NB.requireSession('PAYMENTS_CREATE');
+  if (!me) return;
+  const form = document.getElementById('payment-form');
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  form.executionDate.value = today;
+
+  // ---- async option loading for the native select
+  const accounts = (await NB.api('/api/accounts')).data;
+  const sel = form.debtorAccountId;
+  sel.innerHTML = '<option value="">Select an account</option>' +
+    accounts.map(a => `<option value="${a.id}">${a.name} (${a.maskedNumber}) - ${NB.fmtMoney(a.balance, a.currency)}</option>`).join('');
+
+  // ---- debounced async combobox
+  const input = document.getElementById('beneficiary-search');
+  const list = document.getElementById('beneficiary-listbox');
+  let debounce, seq = 0;
+  const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); };
+  input.addEventListener('input', () => {
+    form.beneficiaryId.value = '';
+    document.getElementById('selected-beneficiary').textContent = '';
+    clearTimeout(debounce);
+    const q = input.value.trim();
+    if (q.length < 2) { close(); return; }
+    debounce = setTimeout(async () => {
+      const mySeq = ++seq;
+      list.innerHTML = '<li class="status" role="presentation"><span class="spinner"></span> Searching…</li>';
+      list.hidden = false; input.setAttribute('aria-expanded', 'true');
+      const res = await NB.api('/api/beneficiaries?q=' + encodeURIComponent(q));
+      if (mySeq !== seq) return; // drop out-of-order responses (race condition guard)
+      if (!res.data.length) { list.innerHTML = '<li class="status" role="presentation">No matching beneficiaries</li>'; return; }
+      list.innerHTML = '';
+      res.data.forEach(b => {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.id = 'opt-' + Math.random().toString(36).slice(2, 10);         // dynamic id: never locate by it!
+        li.dataset.beneficiaryId = b.id;
+        li.setAttribute('data-testid', 'beneficiary-option');
+        li.innerHTML = `${b.name}<span class="iban">${b.bank} · ${b.iban.slice(0, 4)} •••• ${b.iban.slice(-4)}</span>`;
+        li.addEventListener('click', () => {
+          input.value = b.name;
+          form.beneficiaryId.value = b.id;
+          document.getElementById('selected-beneficiary').textContent = `${b.name} · ${b.bank} · ${b.iban.slice(0, 4)} •••• ${b.iban.slice(-4)}`;
+          close();
+        });
+        list.appendChild(li);
+      });
+    }, 250);
+  });
+  input.addEventListener('keydown', (e) => {
+    const opts = [...list.querySelectorAll('[role=option]')];
+    if (!opts.length) return;
+    let idx = opts.findIndex(o => o.getAttribute('aria-selected') === 'true');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      idx = e.key === 'ArrowDown' ? Math.min(idx + 1, opts.length - 1) : Math.max(idx - 1, 0);
+      opts.forEach((o, i) => o.setAttribute('aria-selected', String(i === idx)));
+      input.setAttribute('aria-activedescendant', opts[idx].id);
+    } else if (e.key === 'Enter' && idx >= 0) { e.preventDefault(); opts[idx].click(); }
+    else if (e.key === 'Escape') close();
+  });
+
+  // ---- 3rd-party FX quote (network-mocking target)
+  const fxBox = document.getElementById('fx-quote');
+  const refreshFx = async () => {
+    const cur = form.currency.value;
+    if (cur === 'GBP') { fxBox.innerHTML = ''; return; }
+    fxBox.innerHTML = '<span class="spinner"></span> Fetching live rate…';
+    try {
+      const res = await fetch('/external/fx/rates?base=GBP');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const fx = await res.json();
+      const rate = fx.rates[cur];
+      fxBox.innerHTML = `<p class="banner info" data-testid="fx-rate">Indicative rate: 1 GBP = ${rate.toFixed(4)} ${cur} (${fx.provider})</p>`;
+    } catch (e) {
+      fxBox.innerHTML = '<p class="banner error" role="alert">Live FX rates are unavailable. Your payment will be converted at the rate on the payment date.</p>';
+    }
+  };
+  form.currency.addEventListener('change', refreshFx);
+
+  // ---- review -> confirm (modal) -> submit with Idempotency-Key
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const payload = {
+      debtorAccountId: form.debtorAccountId.value, beneficiaryId: form.beneficiaryId.value,
+      currency: form.currency.value, amount: form.amount.value.trim().replaceAll(',', ''),
+      reference: form.reference.value.trim(), executionDate: form.executionDate.value,
+    };
+    const idemKey = crypto.randomUUID();
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h2 id="confirm-title">Confirm payment</h2>
+      <dl><dt>Beneficiary</dt><dd data-testid="confirm-beneficiary">${input.value || '-'}</dd>
+      <dt>Amount</dt><dd data-testid="confirm-amount">${payload.amount} ${payload.currency}</dd>
+      <dt>Reference</dt><dd>${payload.reference || '-'}</dd></dl>
+      <button type="button" id="confirm-submit">Confirm and submit</button>
+      <button type="button" class="secondary" id="confirm-cancel">Cancel</button></div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#confirm-cancel').onclick = () => modal.remove();
+    modal.querySelector('#confirm-submit').onclick = async (ev) => {
+      ev.target.disabled = true;
+      const res = await NB.api('/api/payments', { method: 'POST', body: payload, headers: { 'Idempotency-Key': idemKey } });
+      modal.remove();
+      if (res.status === 422) { NB.showFieldErrors(form, res.data.error.fields); return; }
+      if (!res.ok) { NB.toast(res.data.error.message); return; }
+      NB.showFieldErrors(form, []);
+      form.closest('section').hidden = true;
+      const result = document.getElementById('result');
+      result.hidden = false;
+      result.querySelector('[data-testid=payment-id]').textContent = res.data.paymentId;
+      document.getElementById('approval-note').hidden = res.data.status !== 'PENDING_APPROVAL';
+      const render = (s) => { const box = document.getElementById('result-status'); box.innerHTML = ''; box.appendChild(NB.badge(s)); };
+      render(res.data.status);
+      // UI polls the async settlement queue until a terminal state
+      const terminal = ['SETTLED', 'FAILED', 'REJECTED', 'PENDING_APPROVAL'];
+      let status = res.data.status;
+      while (!terminal.includes(status)) {
+        await new Promise(r => setTimeout(r, 1000));
+        status = (await NB.api('/api/payments/' + res.data.paymentId)).data.status;
+        render(status);
+      }
+    };
+  });
+})();
+</script>
+</body>
+</html>

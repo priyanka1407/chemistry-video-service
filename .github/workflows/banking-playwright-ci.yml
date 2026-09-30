@@ -1,0 +1,202 @@
+# =============================================================================================
+# Banking Playwright (Java) - CI/CD pipeline
+# ---------------------------------------------------------------------------------------------
+#  PR / push :  build+unit  ->  E2E (4 parallel shards, pinned browser container)  ->  report
+#  nightly   :  + cross-browser (chromium/firefox/webkit)  + quarantine lane (non-blocking)
+#  manual    :  UAT regression against a deployed env, secrets from a protected GitHub Environment
+#
+#  Consistent browser version: every E2E job runs INSIDE mcr.microsoft.com/playwright/java:v1.56.0
+#  whose browsers match <playwright.version>1.56.0</playwright.version> in the pom exactly.
+#  Bump both together (Renovate groups them), never one without the other.
+# =============================================================================================
+name: banking-playwright-ci
+
+on:
+  pull_request:
+    paths: ["banking-playwright-framework/**", ".github/workflows/banking-playwright-ci.yml"]
+  push:
+    branches: [main]
+    paths: ["banking-playwright-framework/**", ".github/workflows/banking-playwright-ci.yml"]
+  schedule:
+    - cron: "17 1 * * 1-5"          # nightly regression, weekdays 01:17 UTC
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Target environment"
+        type: choice
+        options: [ci, uat]
+        default: ci
+
+# Cancel superseded runs of the same PR - saves runners, avoids stale red builds.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write          # publish JUnit results as a check
+  pull-requests: write   # comment the summary on PRs
+
+env:
+  PLAYWRIGHT_VERSION: "1.56.0"
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"   # browsers are baked into the container image
+  MAVEN_OPTS: "-Xmx2g"
+  MVN: "mvn -B -ntp"
+
+defaults:
+  run:
+    working-directory: banking-playwright-framework
+
+jobs:
+  # ------------------------------------------------------------------------------------------
+  build-and-unit:
+    name: Build + unit tests (no browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - name: Compile (main + test)
+        run: $MVN test-compile
+      - name: Unit tests (data generators, BVA, mock schema generation, TOTP)
+        run: $MVN test -Dgroups=unit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: junit-unit, path: banking-playwright-framework/target/surefire-reports/*.xml, retention-days: 14 }
+
+  # ------------------------------------------------------------------------------------------
+  e2e:
+    name: E2E shard ${{ matrix.shard }}/4 (${{ matrix.browser }})
+    needs: build-and-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright/java:v1.56.0-noble   # JDK + Maven + pinned browsers
+      options: --ipc=host                                       # --ipc=host: Chromium needs shared memory
+    strategy:
+      fail-fast: false            # let every shard finish -> full picture of failures in one run
+      matrix:
+        shard: [1, 2, 3, 4]
+        browser: [chromium]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: m2-${{ hashFiles('banking-playwright-framework/pom.xml') }}
+      - name: Run E2E shard
+        run: >
+          $MVN test -Pci -Denv=ci -Dbrowser=${{ matrix.browser }}
+          -Dshard=${{ matrix.shard }}/4
+          -DexcludedGroups=unit,quarantine
+          -Djunit.jupiter.execution.parallel.config.fixed.parallelism=4
+          -Djunit.jupiter.execution.parallel.config.fixed.max-pool-size=4
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-e2e-${{ matrix.browser }}-${{ matrix.shard }}
+          path: banking-playwright-framework/target/surefire-reports/*.xml
+          retention-days: 14
+      - name: Upload traces / screenshots / videos (failures only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts-${{ matrix.browser }}-${{ matrix.shard }}
+          # NEVER upload target/.auth (live session cookies) - only the artifacts dir.
+          path: banking-playwright-framework/target/playwright-artifacts/
+          retention-days: 7
+
+  # ------------------------------------------------------------------------------------------
+  report:
+    name: Test report + flake summary
+    needs: [build-and-unit, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: junit-*, path: reports, merge-multiple: false }
+      - name: Publish JUnit report as a check
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: "reports/**/*.xml"
+          check_name: "Banking E2E results"
+          include_passed: false
+          detailed_summary: true
+      - name: Flaky test summary (passed only after a retry)
+        working-directory: .
+        run: |
+          echo "## Flaky tests (passed on retry)" >> "$GITHUB_STEP_SUMMARY"
+          FLAKES=$(grep -l "<flakyFailure" -r reports || true)
+          if [ -z "$FLAKES" ]; then echo "None :tada:" >> "$GITHUB_STEP_SUMMARY"; else
+            grep -h -B1 "<flakyFailure" -r reports | grep -o 'testcase name="[^"]*" classname="[^"]*"' | sort -u >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Flaky tests detected - see job summary; owners must fix or quarantine within 48h"
+          fi
+
+  # ------------------------------------------------------------------------------------------
+  nightly-cross-browser:
+    name: Nightly ${{ matrix.browser }}
+    if: github.event_name == 'schedule'
+    needs: build-and-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: mcr.microsoft.com/playwright/java:v1.56.0-noble
+      options: --ipc=host
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - run: $MVN test -Pci -Denv=ci -Dbrowser=${{ matrix.browser }} -DexcludedGroups=unit,quarantine
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.browser }}-artifacts
+          path: banking-playwright-framework/target/playwright-artifacts/
+
+  quarantine:
+    name: Quarantine lane (non-blocking)
+    if: github.event_name == 'schedule'
+    needs: build-and-unit
+    runs-on: ubuntu-latest
+    continue-on-error: true      # informs, never blocks; a test leaves quarantine after N green nights
+    container:
+      image: mcr.microsoft.com/playwright/java:v1.56.0-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+      - run: $MVN test -Pquarantine -Denv=ci
+
+  # ------------------------------------------------------------------------------------------
+  uat-regression:
+    name: UAT regression (protected environment)
+    if: github.event_name == 'workflow_dispatch' && inputs.env == 'uat'
+    needs: e2e
+    runs-on: ubuntu-latest
+    environment: uat            # required reviewers + environment-scoped secrets
+    container:
+      image: mcr.microsoft.com/playwright/java:v1.56.0-noble
+      options: --ipc=host
+    env:
+      # Secrets are injected as env vars and read by FrameworkConfig/Secrets - never echoed, never in files.
+      BANK_AUTH_VIEWER_USERNAME: ${{ secrets.BANK_AUTH_VIEWER_USERNAME }}
+      BANK_AUTH_VIEWER_PASSWORD: ${{ secrets.BANK_AUTH_VIEWER_PASSWORD }}
+      BANK_AUTH_VIEWER_TOTP_SECRET: ${{ secrets.BANK_AUTH_VIEWER_TOTP_SECRET }}
+      BANK_AUTH_MAKER_USERNAME: ${{ secrets.BANK_AUTH_MAKER_USERNAME }}
+      BANK_AUTH_MAKER_PASSWORD: ${{ secrets.BANK_AUTH_MAKER_PASSWORD }}
+      BANK_AUTH_MAKER_TOTP_SECRET: ${{ secrets.BANK_AUTH_MAKER_TOTP_SECRET }}
+      BANK_AUTH_CHECKER_USERNAME: ${{ secrets.BANK_AUTH_CHECKER_USERNAME }}
+      BANK_AUTH_CHECKER_PASSWORD: ${{ secrets.BANK_AUTH_CHECKER_PASSWORD }}
+      BANK_AUTH_CHECKER_TOTP_SECRET: ${{ secrets.BANK_AUTH_CHECKER_TOTP_SECRET }}
+      BANK_AUTH_ADMIN_USERNAME: ${{ secrets.BANK_AUTH_ADMIN_USERNAME }}
+      BANK_AUTH_ADMIN_PASSWORD: ${{ secrets.BANK_AUTH_ADMIN_PASSWORD }}
+      BANK_AUTH_ADMIN_TOTP_SECRET: ${{ secrets.BANK_AUTH_ADMIN_TOTP_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: $MVN test -Pci -Denv=uat -Dgroups=smoke
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: uat-artifacts, path: banking-playwright-framework/target/playwright-artifacts/, retention-days: 3 }
